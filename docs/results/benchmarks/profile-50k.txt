@@ -1,0 +1,19 @@
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=50000$' -benchtime 1x -cpuprofile cpu50k.out
+$ go tool pprof -top -cum -nodecount=12 correlate.test cpu50k.out
+Time: 2026-09-29 22:43:30 IST
+Duration: 7.91s, Total samples = 8.27s (104.60%)
+Showing nodes accounting for 4.82s, 58.28% of 8.27s total
+Dropped 216 nodes (cum <= 0.04s)
+Showing top 12 nodes out of 96
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      7.54s 91.17%  prahari/internal/core/correlate_test.BenchmarkRun.func1
+         0     0%     0%      7.54s 91.17%  testing.(*B).run1.func1
+         0     0%     0%      7.54s 91.17%  testing.(*B).runN
+     0.08s  0.97%  0.97%      6.94s 83.92%  prahari/internal/core/correlate.Run
+     0.02s  0.24%  1.21%      6.38s 77.15%  prahari/internal/core/correlate.(*build).cohesion
+     2.07s 25.03% 26.24%      6.24s 75.45%  prahari/internal/core/correlate.(*build).similarity
+     0.07s  0.85% 27.09%      3.11s 37.61%  runtime.mapaccess1_faststr
+     0.49s  5.93% 33.01%      3.06s 37.00%  runtime.mapaccess2_faststr
+     0.26s  3.14% 36.15%      1.73s 20.92%  internal/runtime/maps.(*Map).getWithoutKeySmallFastStr
+     1.61s 19.47% 55.62%      1.61s 19.47%  internal/runtime/maps.memHashAES
+     0.22s  2.66% 58.28%      0.83s 10.04%  runtime.mapassign_faststr

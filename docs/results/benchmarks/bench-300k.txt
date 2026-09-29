@@ -1,0 +1,4 @@
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=300000$' -benchmem -benchtime 1x -timeout 60m
+cpu: 12th Gen Intel(R) Core(TM) i5-1235U
+BenchmarkRun/alerts=300000-12         	       1	202132719100 ns/op	      1484 alerts/s	     22215 incidents	3064310168 B/op	179911882 allocs/op
+ok  	prahari/internal/core/correlate	206.429s
