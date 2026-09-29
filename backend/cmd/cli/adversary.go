@@ -41,22 +41,6 @@ func cmdAdversary(args []string) error {
 	if err != nil {
 		return err
 	}
-	run := func(id string, alerts []domain.Alert, mitigated bool) []domain.Incident {
-		cfg := c.config()
-		cfg.LaunderingPass = mitigated
-		out, err := correlate.Run(baseInput(cat, id, alerts, cfg), correlate.Hooks{})
-		if err != nil {
-			panic(err)
-		}
-		return out.Incidents
-	}
-	order := func(as []domain.Alert) []string {
-		o := make([]string, len(as))
-		for i, a := range as {
-			o[i] = a.ID
-		}
-		return o
-	}
 	fmt.Printf("scenario recall over scenarios detected at β=0, mean of %d seeds (top rank of scenario A in brackets)\n", len(seeds))
 	fmt.Printf("%-22s %-5s", "strategy", "mitig")
 	for _, b := range budgets {
@@ -65,32 +49,84 @@ func cmdAdversary(args []string) error {
 	fmt.Println()
 	for _, s := range strategies {
 		for _, mitigated := range []bool{false, true} {
-			sum := make([]float64, len(budgets))
-			ranks := make([][]string, len(budgets))
-			for _, seed := range seeds {
-				sim := simulate.Generate(simulate.Params{Seed: seed})
-				base := sim.All()
-				consider := evade.Baseline(run(sim.DatasetID, base, mitigated), sim.Truth, order(base))
-				for i, b := range budgets {
-					v, err := evade.Generate(base, sim.Truth, s, b, seed, evade.Params{LinkWindow: c.window, SupernodeRatio: 0.05, SupernodeMinDF: 20, FloodTarget: "pay-db-01"}, "ds_adv")
-					if err != nil {
-						return err
-					}
-					p := evade.Score(b, run("ds_adv", v.Alerts, mitigated), v.Truth, consider, order(v.Alerts))
-					sum[i] += p.ScenarioRecall
-					r := "-"
-					if p.TopRank != nil {
-						r = strconv.Itoa(*p.TopRank)
-					}
-					ranks[i] = append(ranks[i], r)
-				}
+			pts, err := benchCurve(cat, c, s, mitigated, seeds, budgets)
+			if err != nil {
+				return err
 			}
 			fmt.Printf("%-22s %-5v", s, mitigated)
-			for i := range budgets {
-				fmt.Printf("  %.2f [%s]", sum[i]/float64(len(seeds)), strings.Join(ranks[i], ","))
+			for _, p := range pts {
+				ranks := make([]string, len(p.Ranks))
+				for i, r := range p.Ranks {
+					ranks[i] = "-"
+					if r != nil {
+						ranks[i] = strconv.Itoa(*r)
+					}
+				}
+				fmt.Printf("  %.2f [%s]", p.Recall, strings.Join(ranks, ","))
 			}
 			fmt.Println()
 		}
 	}
 	return nil
+}
+
+// benchPoint is one budget of a strategy, aggregated over seeds.
+type benchPoint struct {
+	Budget   float64
+	Recall   float64 // mean scenario recall over seeds
+	Detected int     // seeds on which the flagship scenario was still detected
+	Ranks    []*int  // flagship rank per seed, nil when missed
+}
+
+// benchCurve runs one strategy at each budget over each seed, exactly as the
+// campaign worker does: recall over the scenarios detected at β=0 under the
+// same configuration.
+func benchCurve(cat *attack.Catalog, c common, strategy string, mitigated bool, seeds []int64, budgets []float64) ([]benchPoint, error) {
+	cfg := c.config()
+	cfg.LaunderingPass = mitigated
+	run := func(id string, alerts []domain.Alert) ([]domain.Incident, error) {
+		out, err := correlate.Run(baseInput(cat, id, alerts, cfg), correlate.Hooks{})
+		return out.Incidents, err
+	}
+	order := func(as []domain.Alert) []string {
+		o := make([]string, len(as))
+		for i, a := range as {
+			o[i] = a.ID
+		}
+		return o
+	}
+	params := evade.Params{LinkWindow: cfg.LinkWindow, SupernodeRatio: cfg.SupernodeRatio, SupernodeMinDF: cfg.SupernodeMinDF, FloodTarget: "pay-db-01"}
+	pts := make([]benchPoint, len(budgets))
+	for i, b := range budgets {
+		pts[i].Budget = b
+	}
+	for _, seed := range seeds {
+		sim := simulate.Generate(simulate.Params{Seed: seed})
+		base := sim.All()
+		incs, err := run(sim.DatasetID, base)
+		if err != nil {
+			return nil, err
+		}
+		consider := evade.Baseline(incs, sim.Truth, order(base))
+		for i, b := range budgets {
+			v, err := evade.Generate(base, sim.Truth, strategy, b, seed, params, "ds_adv")
+			if err != nil {
+				return nil, err
+			}
+			incs, err := run("ds_adv", v.Alerts)
+			if err != nil {
+				return nil, err
+			}
+			p := evade.Score(b, incs, v.Truth, consider, order(v.Alerts))
+			pts[i].Recall += p.ScenarioRecall
+			if p.Detected {
+				pts[i].Detected++
+			}
+			pts[i].Ranks = append(pts[i].Ranks, p.TopRank)
+		}
+	}
+	for i := range pts {
+		pts[i].Recall /= float64(len(seeds))
+	}
+	return pts, nil
 }

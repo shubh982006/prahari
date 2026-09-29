@@ -1,0 +1,294 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
+	"prahari/internal/core/attack"
+	"prahari/internal/core/evade"
+	"prahari/internal/core/simulate"
+)
+
+// cmdFailures measures every known miss and prints docs/failure-analysis.md.
+// The prose is fixed; every number in the output comes from running the
+// engine here, so regenerating the file is the only way to change a number.
+func cmdFailures(args []string) error {
+	fs := flag.NewFlagSet("failures", flag.ExitOnError)
+	var c common
+	c.register(fs)
+	seedsFlag := fs.String("seeds", "1-10", "evaluation seeds")
+	advFlag := fs.String("adv-seeds", "1-5", "adversary bench seeds")
+	budgetsFlag := fs.String("budgets", "0,0.25,0.5,0.75,1", "adversary budgets")
+	_ = fs.Parse(args)
+	seeds, err := parseRange(*seedsFlag)
+	if err != nil {
+		return err
+	}
+	advSeeds, err := parseRange(*advFlag)
+	if err != nil {
+		return err
+	}
+	var budgets []float64
+	for _, b := range strings.Split(*budgetsFlag, ",") {
+		v, err := strconv.ParseFloat(b, 64)
+		if err != nil {
+			return err
+		}
+		budgets = append(budgets, v)
+	}
+	cat, err := attack.LoadFile(c.bundle)
+	if err != nil {
+		return err
+	}
+	ev, err := measureEvaluation(cat, c, seeds)
+	if err != nil {
+		return err
+	}
+	curves := map[string][2][]benchPoint{}
+	for _, s := range evade.Strategies {
+		var pair [2][]benchPoint
+		for i, mitigated := range []bool{false, true} {
+			if pair[i], err = benchCurve(cat, c, s, mitigated, advSeeds, budgets); err != nil {
+				return err
+			}
+		}
+		curves[s] = pair
+	}
+	writeFailures(os.Stdout, c, *seedsFlag, *advFlag, ev, curves, budgets)
+	return nil
+}
+
+type scenarioStats struct {
+	Name, Expected, Miss string
+	Detected             int
+	Coverage             []float64
+	Ranks                []int
+	Priorities           map[string]int
+}
+
+type evalStats struct {
+	Seeds     int
+	Planted   int // scenarios planted per dataset
+	Metrics   map[string][]float64
+	Scenarios map[string]*scenarioStats
+	Order     []string
+}
+
+func measureEvaluation(cat *attack.Catalog, c common, seeds []int64) (evalStats, error) {
+	ev := evalStats{Seeds: len(seeds), Metrics: map[string][]float64{}, Scenarios: map[string]*scenarioStats{}}
+	for _, s := range seeds {
+		r, err := runInMemory(cat, simulate.Params{Seed: s, NoiseLevel: c.noise}, c.config())
+		if err != nil {
+			return ev, err
+		}
+		ev.Planted = len(r.sim.Truth.Scenarios)
+		for k, v := range metricMap(r.metrics) {
+			ev.Metrics[k] = append(ev.Metrics[k], v)
+		}
+		for _, sc := range r.scen {
+			st, ok := ev.Scenarios[sc.Scenario]
+			if !ok {
+				st = &scenarioStats{Name: sc.Name, Expected: sc.ExpectedPriority, Priorities: map[string]int{}}
+				ev.Scenarios[sc.Scenario] = st
+				ev.Order = append(ev.Order, sc.Scenario)
+			}
+			st.Coverage = append(st.Coverage, sc.Coverage)
+			if sc.Detected {
+				st.Detected++
+				if sc.Rank != nil {
+					st.Ranks = append(st.Ranks, *sc.Rank)
+				}
+				if sc.ActualPriority != nil {
+					st.Priorities[*sc.ActualPriority]++
+				}
+			} else if sc.MissReason != nil {
+				st.Miss = *sc.MissReason
+			}
+		}
+	}
+	sort.Strings(ev.Order)
+	return ev, nil
+}
+
+func meanStd(xs []float64) string {
+	m, sd, _, _ := stats(xs)
+	return fmt.Sprintf("%.2f ± %.2f", m, sd)
+}
+
+func mean(xs []float64) float64 { m, _, _, _ := stats(xs); return m }
+
+func curveRow(label string, pts []benchPoint) (string, []float64) {
+	vals := make([]float64, len(pts))
+	cells := []string{label}
+	for i, p := range pts {
+		vals[i] = p.Recall
+		cells = append(cells, fmt.Sprintf("%.2f", p.Recall))
+	}
+	return "| " + strings.Join(cells, " | "), vals
+}
+
+func floorAt(budgets, vals []float64) string {
+	if x := evade.CrossesFloor(budgets, vals, 0.70); x != nil {
+		return fmt.Sprintf("β = %g", *x)
+	}
+	return "never"
+}
+
+func writeFailures(w io.Writer, c common, seedsFlag, advFlag string, ev evalStats, curves map[string][2][]benchPoint, budgets []float64) {
+	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
+	last := len(budgets) - 1
+	sc := func(id string) *scenarioStats {
+		if s, ok := ev.Scenarios[id]; ok {
+			return s
+		}
+		return &scenarioStats{Priorities: map[string]int{}}
+	}
+	ranks := func(s *scenarioStats) string {
+		if len(s.Ranks) == 0 {
+			return "—"
+		}
+		sorted := append([]int(nil), s.Ranks...)
+		sort.Ints(sorted)
+		return fmt.Sprintf("%d–%d", sorted[0], sorted[len(sorted)-1])
+	}
+	priorities := func(s *scenarioStats) string {
+		var ks []string
+		for k := range s.Priorities {
+			ks = append(ks, k)
+		}
+		sort.Strings(ks)
+		var out []string
+		for _, k := range ks {
+			out = append(out, fmt.Sprintf("%s×%d", k, s.Priorities[k]))
+		}
+		if len(out) == 0 {
+			return "—"
+		}
+		return strings.Join(out, " ")
+	}
+	bench := func(strategy string) (off, on []float64) {
+		_, off = curveRow("", curves[strategy][0])
+		_, on = curveRow("", curves[strategy][1])
+		return
+	}
+
+	p("# Failure analysis")
+	p("")
+	p("> Generated by `go run ./cmd/cli failures > ../docs/failure-analysis.md`. **Do not edit numbers by hand** — change the engine and regenerate.")
+	p("> Evaluation: seeds %s (%d datasets, %d planted scenarios each). Adversary bench: seeds %s, budgets %v.", seedsFlag, ev.Seeds, ev.Planted, advFlag, budgets)
+	p("> Config: link window %s · supernode ratio 0.05 · laundering pass %v · bands %s · noise %s. Ground truth is read only by the evaluator, never by the engine.", c.window, !c.noLaunder, c.bandMode, c.noise)
+	p("")
+	p("A scenario counts as **detected** when one incident holds ≥ 70%% of its alerts. Bench recall is measured over the scenarios detected at β = 0 under the same configuration, against a 0.70 floor.")
+	p("")
+
+	p("## Known misses at a glance")
+	p("")
+	p("| # | Miss | Measured | Mitigation |")
+	p("|---|---|---|---|")
+	e, f := sc("E"), sc("F")
+	td0, td1 := bench(evade.TemporalDilation)
+	sl0, sl1 := bench(evade.SupernodeLaundering)
+	er0, er1 := bench(evade.EntityRotation)
+	nf0, nf1 := bench(evade.NoiseFlood)
+	p("| 1 | Low-and-slow beyond the link window (scenario E) | detected on %d/%d seeds; best incident holds %s of its alerts | none shipped; see §1 |", e.Detected, ev.Seeds, meanStd(e.Coverage))
+	p("| 2 | Entity switching across stages (scenario F) | detected on %d/%d seeds; best incident holds %s | none shipped; see §2 |", f.Detected, ev.Seeds, meanStd(f.Coverage))
+	p("| 3 | Adversarial temporal dilation | recall falls below the floor at %s; %.2f at β = %g, %.2f with the laundering pass | none — the window is fixed |", floorAt(budgets, td0), td0[last], budgets[last], td1[last])
+	p("| 4 | Adversarial supernode laundering | below the floor at %s without the laundering pass, %s with it; recall at β = %g %.2f → %.2f | laundering pass (design §6.4), shipped and on by default |", floorAt(budgets, sl0), floorAt(budgets, sl1), budgets[last], sl0[last], sl1[last])
+	p("| 5 | Adversarial entity rotation | below the floor at %s; recall at β = %g %.2f (%.2f with the laundering pass) | none shipped; see §3–6 |", floorAt(budgets, er0), budgets[last], er0[last], er1[last])
+	p("| 6 | Decoy flood against the ranking | recall at β = %g %.2f (%.2f with the laundering pass); scenario A's rank per seed %s at β = 0, %s at β = %g | none shipped; see §3–6 |", budgets[last], nf0[last], nf1[last],
+		rankList(curves[evade.NoiseFlood][1][0]), rankList(curves[evade.NoiseFlood][1][last]), budgets[last])
+	p("| 7 | Over-merging | pairwise precision %s; %s fragile incidents per dataset, fragile flag correct %s of the time | cohesion badge surfaces it; split is analyst-driven |", meanStd(ev.Metrics["pairwise_precision"]), meanStd(ev.Metrics["fragile_incidents"]), meanStd(ev.Metrics["cohesion_accuracy"]))
+	p("| 8 | Noise near the top of the queue | %s of the top 10 incidents are not a planted scenario; precision@5 %s | capacity-calibrated bands; see §8 |", meanStd(ev.Metrics["noise_in_top10"]), meanStd(ev.Metrics["precision_at_5"]))
+	p("")
+
+	p("## Per-scenario detection (seeds %s)", seedsFlag)
+	p("")
+	p("| Scenario | Name | Detected | Coverage (best incident) | Rank when detected | Priority when detected (expected) |")
+	p("|---|---|---|---|---|---|")
+	for _, id := range ev.Order {
+		s := ev.Scenarios[id]
+		p("| %s | %s | %d/%d | %s | %s | %s (%s) |", id, s.Name, s.Detected, ev.Seeds, meanStd(s.Coverage), ranks(s), priorities(s), s.Expected)
+	}
+	p("")
+
+	p("## 1. Low-and-slow beyond the link window")
+	p("")
+	p("Scenario E spaces its steps further apart than the 2 h link window, so consecutive alerts never share an edge and the chain arrives as fragments. Measured: detected on **%d/%d** seeds, with the best single incident holding %s of the scenario's alerts. Recorded miss reason: *%s*.", e.Detected, ev.Seeds, meanStd(e.Coverage), e.Miss)
+	p("")
+	p("**Mitigation (not shipped).** A second, longer window restricted to rare entities (high IDF weight), so a specific account seen twice in a day still links while common entities stay on the short window. Widening the global window instead trades this miss for more over-merging (§7). The bench's temporal-dilation curve (§3–6) measures the same limit adversarially.")
+	p("")
+
+	p("## 2. Entity switching across stages")
+	p("")
+	p("Scenario F uses a different account and source IP at each stage, so no entity is shared between stages. Measured: detected on **%d/%d** seeds; best incident holds %s. Recorded miss reason: *%s*.", f.Detected, ev.Seeds, meanStd(f.Coverage), f.Miss)
+	p("")
+	p("**Mitigation (not shipped).** Link on host continuity (the credential used at stage *n* was harvested on the host where stage *n−1* ran) rather than on shared identity. Entity rotation (§3–6) is the same attack with a tunable budget.")
+	p("")
+
+	p("## 3–6. Adversary bench (seeds %s)", advFlag)
+	p("")
+	header := "| Strategy | Laundering pass |"
+	sep := "|---|---|"
+	for _, b := range budgets {
+		header += fmt.Sprintf(" β = %g |", b)
+		sep += "---|"
+	}
+	p("%s Below floor at |", header)
+	p("%s---|", sep)
+	for _, s := range []string{evade.TemporalDilation, evade.SupernodeLaundering, evade.EntityRotation, evade.NoiseFlood} {
+		for i, label := range []string{"off", "on"} {
+			row, vals := curveRow(s+" | "+label, curves[s][i])
+			p("%s | %s |", row, floorAt(budgets, vals))
+		}
+	}
+	p("")
+	p("Scenario A still detected, out of %d seeds, at each budget (laundering pass on):", len(curves[evade.NoiseFlood][1][0].Ranks))
+	p("")
+	p("%s", header)
+	p("%s", sep)
+	for _, s := range []string{evade.TemporalDilation, evade.SupernodeLaundering, evade.EntityRotation, evade.NoiseFlood} {
+		cells := []string{s, "on"}
+		for _, pt := range curves[s][1] {
+			cells = append(cells, fmt.Sprintf("%d", pt.Detected))
+		}
+		p("| %s |", strings.Join(cells, " | "))
+	}
+	p("")
+	p("- **Temporal dilation** stretches inter-stage gaps until the median gap is 3× the window at β = 1. The laundering pass cannot help (%.2f vs %.2f at β = %g) because the missing links are temporal, not entity-based. This is the honest limit of a fixed window; the mitigation is the one in §1.", td0[last], td1[last], budgets[last])
+	p("- **Supernode laundering** routes the shared entity between stages through a stop-listed one. The laundering pass recovers %.2f → %.2f at β = %g. It does not recover everything: it only links components whose stages progress forward and share a consistent actor.", sl0[last], sl1[last], budgets[last])
+	p("- **Entity rotation** gives each stage after the first a fresh account and IP with probability β. At β = %g recall is %.2f.", budgets[last], er0[last])
+	p("- **Noise flood** attacks the scorer, not the correlator: %d decoy alerts on a criticality-9 asset at β = 1. Recall measures grouping, so the ranking effect is in scenario A's rank per seed: %s at β = 0 and %s at β = %g (laundering pass on; `-` = not detected).", int(400*budgets[last]), rankList(curves[evade.NoiseFlood][1][0]), rankList(curves[evade.NoiseFlood][1][last]), budgets[last])
+	p("")
+
+	p("## 7. Over-merging")
+	p("")
+	p("Pairwise precision is %s (pairwise recall %s): many alert pairs the engine puts in one incident belong to different scenarios or to background noise. The engine does not hide this. Cohesion flags %s incidents per dataset as fragile, and the flag is right — the two halves of the proposed split really belong to different truth groups — **%s** of the time. Mean purity of incidents containing scenario alerts is %s.", meanStd(ev.Metrics["pairwise_precision"]), meanStd(ev.Metrics["pairwise_recall"]), meanStd(ev.Metrics["fragile_incidents"]), meanStd(ev.Metrics["cohesion_accuracy"]), meanStd(ev.Metrics["mean_purity"]))
+	p("")
+	p("**Mitigation.** The fragile badge and split preview put the decision in front of the analyst; `POST /incidents/{id}/split` records it in a new run. Not shipped: tightening the stop-list ratio, which trades over-merging for the laundering exposure measured by supernode laundering (§3–6).")
+	p("")
+
+	p("## 8. Noise near the top of the queue")
+	p("")
+	p("On average %s of the top 10 incidents are dominated by background alerts rather than a planted scenario, and precision@5 is %s. Context, not excuse: each dataset plants only %d scenarios, so even an engine that returned each as exactly one incident would score at least %.1f here. Anything above that bound is background incidents outranking planted ones.", meanStd(ev.Metrics["noise_in_top10"]), meanStd(ev.Metrics["precision_at_5"]), ev.Planted, math.Max(0, float64(10-ev.Planted))/10)
+	p("")
+	p("Compared with the stated baseline (an analyst reading alerts in timestamp order at 30 s each against incidents in rank order at 180 s each), time to the first real attack still falls by %s.", meanStd(ev.Metrics["triage_time_reduction"]))
+	p("")
+	p("**Mitigation (partial).** Capacity-calibrated bands keep P1 to what one shift can work, and feedback lowers the precision of noisy rules for the next run. Neither is measured here: every run in this file starts from the default rule statistics.")
+}
+
+func rankList(pt benchPoint) string {
+	out := make([]string, len(pt.Ranks))
+	for i, r := range pt.Ranks {
+		out[i] = "-"
+		if r != nil {
+			out[i] = strconv.Itoa(*r)
+		}
+	}
+	return "[" + strings.Join(out, ",") + "]"
+}
