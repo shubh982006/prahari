@@ -1,6 +1,7 @@
 package httpapi_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"database/sql"
@@ -13,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -206,6 +209,144 @@ func field(b []byte, path ...string) any {
 
 func str(v any) string { s, _ := v.(string); return s }
 
+// validateSchema checks body against a named component schema, for payloads
+// the path-based lookup cannot reach (SSE event data).
+func (s *spec) validateSchema(t *testing.T, name string, body []byte) {
+	t.Helper()
+	ptr := "#/components/schemas/" + name
+	sch, ok := s.cache[ptr]
+	if !ok {
+		var err error
+		if sch, err = s.compiler.Compile(specURL + ptr); err != nil {
+			t.Fatalf("compile %s: %v", ptr, err)
+		}
+		s.cache[ptr] = sch
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Errorf("%s: not JSON: %s", name, trim(body))
+		return
+	}
+	if err := sch.Validate(v); err != nil {
+		t.Errorf("%s does not match the contract:\n%v\nbody: %s", name, err, trim(body))
+	}
+}
+
+type sseEvent struct {
+	ID, Type string
+	Data     []byte
+}
+
+// sseStream is an open Server-Sent Events connection read in the background.
+type sseStream struct {
+	mu     sync.Mutex
+	events []sseEvent
+	closed chan struct{} // closed when the server ends the stream
+	cancel context.CancelFunc
+}
+
+// sse opens path with the token in the query, as EventSource must, and
+// collects events until the server closes the stream or stop is called.
+func (c *client) sse(path string) *sseStream {
+	c.t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", c.base+"/api/v1"+path+sep+"access_token="+c.token, nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		cancel()
+		c.t.Fatal(err)
+	}
+	if res.StatusCode != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
+		cancel()
+		c.t.Fatalf("GET %s: %d %s", path, res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	st := &sseStream{closed: make(chan struct{}), cancel: cancel}
+	go func() {
+		defer close(st.closed)
+		defer res.Body.Close()
+		sc := bufio.NewScanner(res.Body)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		var ev sseEvent
+		for sc.Scan() {
+			line := sc.Text()
+			switch {
+			case line == "":
+				if ev.Type != "" {
+					st.mu.Lock()
+					st.events = append(st.events, ev)
+					st.mu.Unlock()
+				}
+				ev = sseEvent{}
+			case strings.HasPrefix(line, "id: "):
+				ev.ID = line[4:]
+			case strings.HasPrefix(line, "event: "):
+				ev.Type = line[7:]
+			case strings.HasPrefix(line, "data: "):
+				ev.Data = []byte(line[6:])
+			}
+		}
+	}()
+	return st
+}
+
+func (st *sseStream) stop() { st.cancel(); <-st.closed }
+
+func (st *sseStream) snapshot() []sseEvent {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return append([]sseEvent(nil), st.events...)
+}
+
+// wait blocks until the server closes the stream.
+func (st *sseStream) wait(t *testing.T, d time.Duration) []sseEvent {
+	t.Helper()
+	select {
+	case <-st.closed:
+	case <-time.After(d):
+		t.Fatalf("stream still open after %s; got %d events", d, len(st.snapshot()))
+	}
+	return st.snapshot()
+}
+
+// waitFor polls until an event matches or the deadline passes.
+func (st *sseStream) waitFor(t *testing.T, d time.Duration, what string, match func(sseEvent) bool) sseEvent {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		for _, ev := range st.snapshot() {
+			if match(ev) {
+				return ev
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no %s event within %s; got %d events", what, d, len(st.snapshot()))
+	return sseEvent{}
+}
+
+func seq(ev sseEvent) int { n, _ := strconv.Atoi(ev.ID); return n }
+
+// increasingIDs asserts event ids are strictly increasing integers, which is
+// what Last-Event-ID resume relies on.
+func increasingIDs(t *testing.T, name string, evs []sseEvent) {
+	t.Helper()
+	prev := -1
+	for _, ev := range evs {
+		n, err := strconv.Atoi(ev.ID)
+		if err != nil || n <= prev {
+			t.Fatalf("%s: event ids not strictly increasing at %q (previous %d)", name, ev.ID, prev)
+		}
+		prev = n
+	}
+}
+
+// runStages is the engine pipeline in contract order (api-contract §6).
+var runStages = []string{"load", "filter", "entities", "link", "launder", "group", "shape", "cohesion", "score", "compliance", "commit"}
+
 var pgSeq atomic.Int64
 
 func stores(t *testing.T) map[string]func(t *testing.T) app.Store {
@@ -335,6 +476,18 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 		t.Fatalf("wrong content type: %d", res.StatusCode)
 	}
 
+	// the global stream needs a token like every route, then stays open for
+	// the rest of the test so each notification can be checked as it happens
+	if res, err := http.Get(srv.URL + "/api/v1/events"); err != nil || res.StatusCode != 401 {
+		t.Fatalf("global stream without a token: %v %v", res.StatusCode, err)
+	} else {
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		sp.validate(t, "GET", "/events", 401, b)
+	}
+	global := c.sse("/events")
+	defer global.stop()
+
 	// a run, streamed
 	code, _, b = c.do("POST", "/runs", nil, map[string]any{"dataset_id": ds}, "Idempotency-Key", "run-key-1")
 	if code != 202 {
@@ -347,14 +500,52 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	if code, _, _ := c.do("POST", "/runs", nil, map[string]any{"dataset_id": ds, "overrides": map[string]any{"link_window": "1s"}}); code != 400 {
 		t.Fatalf("override validation: %d", code)
 	}
-	sse, err := http.Get(srv.URL + "/api/v1/runs/" + runID + "/events?access_token=" + c.token)
-	if err != nil {
-		t.Fatal(err)
+	// The run stream replays from the start and closes after done. Stages
+	// arrive in pipeline order, after the run starts running and before done.
+	runEvs := c.sse("/runs/"+runID+"/events").wait(t, 30*time.Second)
+	increasingIDs(t, "run stream", runEvs)
+	var stages []string
+	running := false
+	for i, ev := range runEvs {
+		switch ev.Type {
+		case "status":
+			sp.validateSchema(t, "RunStatusEvent", ev.Data)
+			if str(field(ev.Data, "status")) == "running" {
+				running = true
+			}
+		case "stage":
+			sp.validateSchema(t, "RunStageEvent", ev.Data)
+			if !running {
+				t.Fatalf("stage %s before status running", field(ev.Data, "stage"))
+			}
+			stages = append(stages, str(field(ev.Data, "stage")))
+		case "done":
+			sp.validateSchema(t, "RunDoneEvent", ev.Data)
+			if i != len(runEvs)-1 {
+				t.Fatalf("done is not the last event: %v", runEvs[i+1:])
+			}
+		default:
+			t.Fatalf("unexpected run event %q: %s", ev.Type, ev.Data)
+		}
+		if id := str(field(ev.Data, "run_id")); id != runID {
+			t.Fatalf("%s event for run %q on run %s's stream", ev.Type, id, runID)
+		}
 	}
-	stream, _ := io.ReadAll(sse.Body)
-	sse.Body.Close()
-	if !strings.HasPrefix(sse.Header.Get("Content-Type"), "text/event-stream") || !strings.Contains(string(stream), "event: done") {
-		t.Fatalf("run stream did not finish with done:\n%s", stream)
+	if len(runEvs) == 0 || runEvs[len(runEvs)-1].Type != "done" {
+		t.Fatalf("run stream did not finish with done: %v", runEvs)
+	}
+	if strings.Join(stages, ",") != strings.Join(runStages, ",") {
+		t.Fatalf("stage order\n got %v\nwant %v", stages, runStages)
+	}
+
+	// the same run on the global stream: started, then finished
+	isRun := func(typ string) func(sseEvent) bool {
+		return func(ev sseEvent) bool { return ev.Type == typ && str(field(ev.Data, "run_id")) == runID }
+	}
+	started := global.waitFor(t, 5*time.Second, "run.started", isRun("run.started"))
+	finished := global.waitFor(t, 5*time.Second, "run.finished", isRun("run.finished"))
+	if seq(started) >= seq(finished) {
+		t.Fatalf("run.finished (%s) before run.started (%s)", finished.ID, started.ID)
 	}
 	c.do("GET", "/runs/{runId}", []string{runID}, nil)
 	c.do("GET", "/runs", nil, nil)
@@ -392,6 +583,9 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	if code, _, b := c.do("PATCH", "/incidents/{incidentId}", []string{inc}, map[string]any{"status": "investigating", "assignee": "u_meow"}, "If-Match", etag); code != 200 {
 		t.Fatalf("patch: %d %s", code, b)
 	}
+	global.waitFor(t, 5*time.Second, "incident.updated", func(ev sseEvent) bool {
+		return ev.Type == "incident.updated" && str(field(ev.Data, "incident_id")) == inc
+	})
 	if code, _, _ := c.do("PATCH", "/incidents/{incidentId}", []string{inc}, map[string]any{"status": "closed"}, "If-Match", etag); code != 412 {
 		t.Fatal("stale ETag must be 412")
 	}
@@ -446,6 +640,9 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	// compliance
 	_, _, cases := c.do("GET", "/compliance/cases?state=all", nil, nil)
 	if caseID := str(field(cases, "data", "0", "case_id")); caseID != "" {
+		global.waitFor(t, 5*time.Second, "case.opened", func(ev sseEvent) bool {
+			return ev.Type == "case.opened" && str(field(ev.Data, "case_id")) == caseID
+		})
 		c.do("GET", "/compliance/cases/{caseId}", []string{caseID}, nil)
 		c.do("GET", "/compliance/cases/{caseId}/drafts/{track}", []string{caseID, "certin"}, nil)
 		c.do("GET", "/compliance/cases/{caseId}/drafts/{track}", []string{caseID, "dpdp_report"}, nil)
@@ -478,15 +675,39 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 		t.Fatalf("campaign: %d %s", code, b)
 	}
 	camp := str(field(b, "campaign_id"))
-	for i := 0; i < 200; i++ {
-		_, _, cb := c.do("GET", "/adversary/campaigns/{campaignId}", []string{camp}, nil)
-		if s := str(field(cb, "status")); s == "succeeded" || s == "failed" {
-			if s == "failed" {
-				t.Fatalf("campaign failed: %s", cb)
-			}
-			break
+	// Each budget streams started then finished, in the order requested,
+	// and done closes the stream.
+	campEvs := c.sse("/adversary/campaigns/"+camp+"/events").wait(t, 60*time.Second)
+	increasingIDs(t, "campaign stream", campEvs)
+	var trace []string
+	for i, ev := range campEvs {
+		sp.validateSchema(t, "CampaignEvent", ev.Data)
+		if id := str(field(ev.Data, "campaign_id")); id != camp {
+			t.Fatalf("%s event for campaign %q on %s's stream", ev.Type, id, camp)
 		}
-		time.Sleep(50 * time.Millisecond)
+		switch ev.Type {
+		case "budget.started", "budget.finished":
+			trace = append(trace, fmt.Sprintf("%s %v", ev.Type, field(ev.Data, "budget")))
+		case "done":
+			if i != len(campEvs)-1 {
+				t.Fatalf("done is not the last campaign event: %v", campEvs[i+1:])
+			}
+		default:
+			t.Fatalf("unexpected campaign event %q: %s", ev.Type, ev.Data)
+		}
+	}
+	want := "budget.started 0,budget.finished 0,budget.started 1,budget.finished 1"
+	if got := strings.Join(trace, ","); got != want || campEvs[len(campEvs)-1].Type != "done" {
+		t.Fatalf("campaign stream\n got %s then %q\nwant %s then done", got, campEvs[len(campEvs)-1].Type, want)
+	}
+	if code, _, cb := c.do("GET", "/adversary/campaigns/{campaignId}", []string{camp}, nil); code != 200 || str(field(cb, "status")) != "succeeded" {
+		t.Fatalf("campaign after done: %d %s", code, cb)
+	}
+	global.waitFor(t, 5*time.Second, "campaign.finished", func(ev sseEvent) bool {
+		return ev.Type == "campaign.finished" && str(field(ev.Data, "campaign_id")) == camp
+	})
+	if code, _, _ := c.do("GET", "/adversary/campaigns/{campaignId}/events", []string{"camp_NOPE0000"}, nil); code != 404 {
+		t.Fatal("stream for an unknown campaign must be 404")
 	}
 	c.do("GET", "/adversary/campaigns", nil, nil)
 	_, _, curve := c.do("GET", "/adversary/curve?base_dataset="+ds, nil, nil)
@@ -495,6 +716,16 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	}
 	if code, _, _ := c.do("POST", "/adversary/campaigns", nil, map[string]any{"base_dataset": "ds_ext_upload", "strategy": "noise_flood"}); code != 422 {
 		t.Fatal("a campaign without ground truth must be 422")
+	}
+
+	// everything the global stream carried matches the contract
+	globalEvs := global.snapshot()
+	increasingIDs(t, "global stream", globalEvs)
+	for _, ev := range globalEvs {
+		sp.validateSchema(t, "GlobalEvent", ev.Data)
+		if typ := str(field(ev.Data, "type")); typ != ev.Type {
+			t.Errorf("global event %q carries type %q", ev.Type, typ)
+		}
 	}
 
 	// roles
@@ -517,9 +748,9 @@ func TestSpecValidatorRejectsViolations(t *testing.T) {
 		status       int
 		body         string
 	}{
-		{"GET", "/meta", 200, `{"version":"x"}`},                                                        // missing required fields
+		{"GET", "/meta", 200, `{"version":"x"}`}, // missing required fields
 		{"GET", "/incidents/{incidentId}/cohesion", 200, `{"incident_id":"INC-1","cohesion":"wobbly","bridge_edges":[]}`}, // bad pattern and enum
-		{"GET", "/runs/{runId}/receipt", 404, `{"code":"NOT_FOUND"}`},                                    // problem without required fields
+		{"GET", "/runs/{runId}/receipt", 404, `{"code":"NOT_FOUND"}`},                                                     // problem without required fields
 	}
 	for _, b := range bad {
 		inner := &testing.T{}
