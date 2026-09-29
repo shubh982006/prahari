@@ -1,0 +1,2071 @@
+openapi: 3.1.0
+info:
+  title: Prahari API
+  version: 2.0.0
+  summary: Alert correlation, cohesion, business-risk ranking, counterfactuals, breach clocks and adversarial evaluation.
+  license: { name: MIT, identifier: MIT }
+  description: |
+    Contract-first API for Prahari (Microsoft Innovate 2026, problem #25, absorbing #22 and #27).
+
+    * All timestamps are UTC, RFC 3339. The UI renders IST.
+    * All errors are RFC 9457 `application/problem+json` — switch on `code`, never on `title`.
+    * List endpoints use cursor pagination and return `{ data, page }`.
+    * Live progress is Server-Sent Events. `EventSource` cannot set headers, so SSE
+      endpoints also accept `?access_token=`; only those endpoints do.
+    * Incidents are immutable per run and identified by `(run_id, incident_id)`.
+      Analyst state is keyed on the stable `incident_id` alone, so verdicts survive a re-run.
+    * Clients must ignore unknown fields: additive changes stay in v1.
+    * Human-readable companion: `api-contract.md`. Design: `design.md`.
+
+servers:
+  - { url: 'http://localhost:8080/api/v1', description: Docker Compose (via nginx) }
+  - { url: 'http://localhost:8000/api/v1', description: Go API directly }
+
+security: [ { bearerAuth: [] } ]
+
+tags:
+  - { name: Auth,        description: 'JWT login' }
+  - { name: Datasets,    description: 'Simulation, registry and NDJSON ingest (#22 input)' }
+  - { name: Alerts,      description: 'Raw alert feed' }
+  - { name: Runs,        description: 'Correlation runs, live progress and determinism receipts' }
+  - { name: Events,      description: 'Server-Sent Event streams' }
+  - { name: Incidents,   description: 'Ranked incidents, projections, cohesion, counterfactuals (#25)' }
+  - { name: Adversary,   description: 'Evasion campaigns and the robustness curve' }
+  - { name: Rules,       description: 'Learned rule confidence and suppressions' }
+  - { name: Assets,      description: 'CMDB' }
+  - { name: Compliance,  description: 'CERT-In and DPDP breach clocks (#27)' }
+  - { name: Evaluations, description: 'Metrics against ground truth' }
+  - { name: Audit,       description: 'Hash-chained audit trail' }
+  - { name: System,      description: 'Build and configuration metadata' }
+
+paths:
+
+  # ───────────────────────────────── Auth
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Exchange username and password for a JWT
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } }
+      responses:
+        '200': { description: Authenticated, content: { application/json: { schema: { $ref: '#/components/schemas/LoginResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: getMe
+      summary: Current user
+      responses:
+        '200': { description: The authenticated user, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────────────── System
+  /meta:
+    get:
+      tags: [System]
+      operationId: getMeta
+      summary: Build, storage dialect, ATT&CK version and active engine configuration
+      responses:
+        '200': { description: Metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Meta' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────────────── Datasets
+  /simulations:
+    post:
+      tags: [Datasets]
+      operationId: createSimulation
+      summary: Generate a synthetic dataset (auth events, alerts, hidden ground truth) and ingest it
+      description: Requires role `lead`. Deterministic for a given seed and parameters.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SimulationRequest' } } }
+      responses:
+        '201':
+          description: Dataset created and ingested
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /datasets:
+    get:
+      tags: [Datasets]
+      operationId: listDatasets
+      summary: List datasets
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: kind
+          in: query
+          schema: { type: string, enum: [simulated, ingested, adversarial] }
+      responses:
+        '200':
+          description: Datasets, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Dataset' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Datasets]
+      operationId: createDataset
+      summary: Register an empty dataset for external NDJSON ingest (role `lead`)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/DatasetCreate' } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /datasets/{datasetId}:
+    parameters: [ { $ref: '#/components/parameters/DatasetIdPath' } ]
+    get:
+      tags: [Datasets]
+      operationId: getDataset
+      summary: Get a dataset
+      responses:
+        '200': { description: Dataset, content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /datasets/{datasetId}/auth-events:
+    parameters: [ { $ref: '#/components/parameters/DatasetIdPath' } ]
+    post:
+      tags: [Datasets]
+      operationId: ingestAuthEvents
+      summary: Ingest raw authentication events (NDJSON); detectors raise alerts from them
+      description: |
+        Requires role `lead`. One `AuthEventInput` per line. Max body 50 MB, max line 1 MB.
+        Invalid lines are skipped and reported; duplicate `event_id` values are ignored.
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema: { $ref: '#/components/schemas/AuthEventInput' }
+            example: |
+              {"event_id":"AE-1","timestamp":"2026-09-29T03:32:11Z","username":"priya@corp.local","src_ip":"185.220.101.7","geo":"NL-AMS","result":"failure","app":"vpn"}
+      responses:
+        '200': { description: Ingest report, content: { application/json: { schema: { $ref: '#/components/schemas/IngestReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /datasets/{datasetId}/alerts:
+    parameters: [ { $ref: '#/components/parameters/DatasetIdPath' } ]
+    post:
+      tags: [Datasets]
+      operationId: ingestAlerts
+      summary: Ingest alerts from any source (NDJSON, role `lead`)
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema: { $ref: '#/components/schemas/AlertInput' }
+      responses:
+        '200': { description: Ingest report, content: { application/json: { schema: { $ref: '#/components/schemas/IngestReport' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  # ───────────────────────────────── Alerts
+  /alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: Raw alert feed (the firehose)
+      parameters:
+        - $ref: '#/components/parameters/DatasetIdQuery'
+        - { name: from,     in: query, schema: { type: string, format: date-time } }
+        - { name: to,       in: query, schema: { type: string, format: date-time } }
+        - { name: source,   in: query, description: Comma-separated, schema: { type: string, example: 'auth,edr' } }
+        - { name: severity, in: query, description: Comma-separated, schema: { type: string, example: 'high,critical' } }
+        - { name: rule_id,  in: query, schema: { type: string } }
+        - { name: entity,   in: query, description: 'Entity key, e.g. host:dc01', schema: { type: string } }
+        - { name: q,        in: query, description: Case-insensitive substring on rule name, schema: { type: string } }
+        - { name: sort,     in: query, schema: { type: string, enum: [ts, -ts], default: ts } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Alert' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /alerts/stats:
+    get:
+      tags: [Alerts]
+      operationId: getAlertStats
+      summary: Counts by source, severity and hour
+      parameters: [ { $ref: '#/components/parameters/DatasetIdQuery' } ]
+      responses:
+        '200': { description: Stats, content: { application/json: { schema: { $ref: '#/components/schemas/AlertStats' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /alerts/{alertId}:
+    get:
+      tags: [Alerts]
+      operationId: getAlert
+      summary: One alert including its raw payload
+      parameters:
+        - { name: alertId, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/DatasetIdQuery'
+      responses:
+        '200': { description: Alert with raw payload, content: { application/json: { schema: { $ref: '#/components/schemas/AlertWithRaw' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────────── Runs
+  /runs:
+    get:
+      tags: [Runs]
+      operationId: listRuns
+      summary: Run history
+      parameters:
+        - { name: dataset_id, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Runs, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Run' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Runs]
+      operationId: createRun
+      summary: Start a correlation run (asynchronous, role `lead`)
+      description: |
+        Only one run per dataset may be active. A second request returns `409 RUN_IN_PROGRESS`
+        carrying `active_run_id`; the client should attach to that run's SSE stream.
+        Exclusivity uses a `run_locks` row with a TTL, which behaves identically on both
+        storage dialects and survives a process crash.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/RunCreate' } } }
+      responses:
+        '202':
+          description: Run accepted
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /runs/{runId}:
+    parameters: [ { $ref: '#/components/parameters/RunIdPath' } ]
+    get:
+      tags: [Runs]
+      operationId: getRun
+      summary: Run status and summary
+      responses:
+        '200': { description: Run, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /runs/{runId}/cancel:
+    parameters: [ { $ref: '#/components/parameters/RunIdPath' } ]
+    post:
+      tags: [Runs]
+      operationId: cancelRun
+      summary: Cancel a queued or running run (role `lead`)
+      responses:
+        '202': { description: Cancellation requested, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /runs/{runId}/receipt:
+    parameters: [ { $ref: '#/components/parameters/RunIdPath' } ]
+    get:
+      tags: [Runs]
+      operationId: getReceipt
+      summary: Determinism receipt for a run
+      description: |
+        Two runs with the same `input_hash` and `config_hash` produce the same `output_hash`
+        — on either storage dialect, on any machine. This proves the engine is a pure function
+        of its inputs. It does NOT prove the answer is correct; that is what `/evaluations`
+        and `/adversary` are for.
+
+        `config` includes fingerprints of the CMDB, rule statistics and active suppressions
+        as the run saw them, because those also change the output.
+      responses:
+        '200': { description: Receipt, content: { application/json: { schema: { $ref: '#/components/schemas/Receipt' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /runs/{runId}/events:
+    parameters: [ { $ref: '#/components/parameters/RunIdPath' } ]
+    get:
+      tags: [Runs, Events]
+      operationId: streamRunEvents
+      summary: Live run progress (Server-Sent Events)
+      description: |
+        Event types: `status` (RunStatusEvent), `stage` (RunStageEvent), `done` (RunDoneEvent),
+        `error` (RunErrorEvent). Heartbeat comment `: ping` every 15 s. Resume with
+        `Last-Event-ID`; the last 200 events per run are replayed. Connecting to a finished
+        run replays then closes.
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+        - $ref: '#/components/parameters/AccessTokenQuery'
+      responses:
+        '200':
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/RunStatusEvent' }
+                  - { $ref: '#/components/schemas/RunStageEvent' }
+                  - { $ref: '#/components/schemas/RunDoneEvent' }
+                  - { $ref: '#/components/schemas/RunErrorEvent' }
+              example: |
+                id: 41
+                event: stage
+                data: {"run_id":"0192a7c4-6e1b-7c3e-9a51-2f4d7a0c1b11","stage":"group","count":28,"elapsed_ms":61}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events:
+    get:
+      tags: [Events]
+      operationId: streamGlobalEvents
+      summary: Global notifications (Server-Sent Events)
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+        - $ref: '#/components/parameters/AccessTokenQuery'
+      responses:
+        '200':
+          description: Event stream
+          content: { text/event-stream: { schema: { $ref: '#/components/schemas/GlobalEvent' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────────────── Incidents
+  /incidents:
+    get:
+      tags: [Incidents]
+      operationId: listIncidents
+      summary: Ranked incident queue
+      description: '`-risk` (default) is rank order: priority band first, then risk, so a P1 floor sits above higher-scoring P2s.'
+      parameters:
+        - $ref: '#/components/parameters/DatasetIdQuery'
+        - { name: run_id,   in: query, description: Defaults to the dataset's current run, schema: { type: string, format: uuid } }
+        - { name: priority, in: query, description: 'Comma-separated, e.g. P1,P2', schema: { type: string } }
+        - { name: label,    in: query, schema: { type: string } }
+        - { name: status,   in: query, schema: { type: string } }
+        - { name: cohesion, in: query, description: Comma-separated, schema: { type: string, example: fragile } }
+        - { name: asset,    in: query, schema: { type: string } }
+        - { name: assignee, in: query, schema: { type: string } }
+        - { name: breach,   in: query, schema: { type: boolean } }
+        - { name: sort,     in: query, schema: { type: string, enum: ['-risk', risk, '-first_seen', first_seen], default: '-risk' } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Incidents
+          headers: { ETag: { schema: { type: string } } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page, run_id, totals, thresholds]
+                properties:
+                  run_id:     { type: string, format: uuid }
+                  totals:     { $ref: '#/components/schemas/IncidentTotals' }
+                  thresholds: { $ref: '#/components/schemas/Bands' }
+                  data:       { type: array, items: { $ref: '#/components/schemas/IncidentSummary' } }
+                  page:       { $ref: '#/components/schemas/PageInfo' }
+        '304': { description: Not modified }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getIncident
+      summary: Incident detail with risk breakdown and cohesion
+      responses:
+        '200':
+          description: Incident
+          headers: { ETag: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/IncidentDetail' } } }
+        '304': { description: Not modified }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Incidents]
+      operationId: updateIncident
+      summary: Change workflow status or assignee
+      description: Writes to `incident_state`, which is keyed on the stable incident id, so the change survives a re-run.
+      parameters:
+        - { name: If-Match, in: header, required: true, description: ETag from the last GET, schema: { type: string } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/IncidentPatch' } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentDetail' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '428': { $ref: '#/components/responses/PreconditionRequired' }
+
+  /incidents/{incidentId}/alerts:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: listIncidentAlerts
+      summary: Member alerts in time order
+      parameters:
+        - { name: on_chain, in: query, description: Only alerts on the forward kill-chain path, schema: { type: boolean } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/IncidentAlert' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/graph:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getIncidentGraph
+      summary: Entity graph projection (for React Flow)
+      description: Edges between the same two entities are collapsed to one (the on-chain or bridge alert wins); at most 300 edges.
+      responses:
+        '200': { description: Graph, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentGraph' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getIncidentTimeline
+      summary: Kill-chain swim-lane projection
+      responses:
+        '200': { description: Timeline, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentTimeline' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/narrative:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getNarrative
+      summary: Grounded incident brief (cached, LLM, or deterministic template)
+      description: |
+        Never fails because of the model. On timeout, error, open circuit breaker or failed
+        citation validation, a deterministic template narrative is returned with `source: template`.
+      responses:
+        '200': { description: Narrative, content: { application/json: { schema: { $ref: '#/components/schemas/Narrative' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/narrative/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    post:
+      tags: [Incidents]
+      operationId: regenerateNarrative
+      summary: Bypass the cache and generate again (10/min per user)
+      responses:
+        '200': { description: Narrative, content: { application/json: { schema: { $ref: '#/components/schemas/Narrative' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /incidents/{incidentId}/cohesion:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getCohesion
+      summary: How confident the system is that these alerts are ONE incident
+      description: |
+        Bridges are found with Tarjan's low-link DFS in O(V+E) over alert-to-alert links (two
+        alerts sharing several entities are one link). An incident is `fragile` when a bridge
+        rests on a low-weight (common) entity, removing it produces two substantial halves,
+        and the halves look different (entity-set Jaccard below 0.5; halves that look alike
+        are one recurring activity split by time). `split_preview` is present only when `fragile`.
+      responses:
+        '200': { description: Cohesion, content: { application/json: { schema: { $ref: '#/components/schemas/Cohesion' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/split:
+    parameters: [ { $ref: '#/components/parameters/IncidentIdPath' } ]
+    post:
+      tags: [Incidents]
+      operationId: splitIncident
+      summary: Materialise a fragile incident as two incidents (role `lead`)
+      description: |
+        Creates a NEW run rather than editing the existing one, so the original stays immutable
+        and its determinism receipt stays valid. The cut is recorded on the dataset (and in the
+        new run's config hash) so later runs honour it. The analyst's judgement is recorded in
+        the audit log.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SplitRequest' } } }
+      responses:
+        '201': { description: Split applied, content: { application/json: { schema: { $ref: '#/components/schemas/SplitResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /incidents/{incidentId}/counterfactuals:
+    parameters:
+      - $ref: '#/components/parameters/IncidentIdPath'
+      - $ref: '#/components/parameters/RunIdQuery'
+    get:
+      tags: [Incidents]
+      operationId: getCounterfactuals
+      summary: The minimal changes that would flip this incident's priority
+      description: |
+        Computed on demand from the closed-form score; nothing is stored. `what_if_criticality`
+        previews a CMDB edit without persisting it — this is what the Risk tab's live slider calls.
+        A `boundary` entry with `reachable: false` means that factor alone cannot reach the band
+        edge even at its extreme (or a hard P1 floor holds); it is reported honestly rather than clamped.
+      parameters:
+        - name: what_if_criticality
+          in: query
+          description: 'Preview a criticality change, e.g. `dc01:4`. Repeatable.'
+          schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}:(10|[1-9])$' }
+      responses:
+        '200': { description: Counterfactuals, content: { application/json: { schema: { $ref: '#/components/schemas/CounterfactualSet' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /incidents/{incidentId}/feedback:
+    parameters: [ { $ref: '#/components/parameters/IncidentIdPath' } ]
+    get:
+      tags: [Incidents]
+      operationId: listFeedback
+      summary: Verdict history for an incident
+      responses:
+        '200':
+          description: Feedback, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties: { data: { type: array, items: { $ref: '#/components/schemas/Feedback' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Incidents]
+      operationId: createFeedback
+      summary: Record an analyst verdict (updates per-rule confidence for the next run)
+      description: |
+        `suppress` requires role `lead`. The current run's scores do not change; start a new run
+        to re-rank. Learning applies to every alert source, not only email.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/FeedbackCreate' } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/FeedbackResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ───────────────────────────────── Adversary
+  /adversary/campaigns:
+    get:
+      tags: [Adversary]
+      operationId: listCampaigns
+      summary: List evasion campaigns
+      parameters:
+        - { name: base_dataset, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Campaigns
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Campaign' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Adversary]
+      operationId: createCampaign
+      summary: Run an evasion campaign against a base dataset (role `lead`)
+      description: |
+        Generates mutated variants of a dataset's planted attacks at each evasion budget,
+        correlates each, and evaluates recall against ground truth. Generators are seeded and
+        pure, so a campaign is reproducible. Variants are written as datasets with
+        `kind: adversarial` and a `parent_id`; they can never mutate a real dataset.
+      parameters: [ { $ref: '#/components/parameters/IdempotencyKey' } ]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/CampaignCreate' } } }
+      responses:
+        '202':
+          description: Campaign accepted
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Campaign' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /adversary/campaigns/{campaignId}:
+    parameters: [ { $ref: '#/components/parameters/CampaignIdPath' } ]
+    get:
+      tags: [Adversary]
+      operationId: getCampaign
+      summary: Campaign with per-budget results
+      responses:
+        '200': { description: Campaign, content: { application/json: { schema: { $ref: '#/components/schemas/CampaignDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /adversary/campaigns/{campaignId}/events:
+    parameters: [ { $ref: '#/components/parameters/CampaignIdPath' } ]
+    get:
+      tags: [Adversary, Events]
+      operationId: streamCampaignEvents
+      summary: Live campaign progress (Server-Sent Events)
+      description: 'Event types: `budget.started`, `budget.finished`, `done`, `error`.'
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+        - $ref: '#/components/parameters/AccessTokenQuery'
+      responses:
+        '200':
+          description: Event stream
+          content: { text/event-stream: { schema: { $ref: '#/components/schemas/CampaignEvent' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /adversary/curve:
+    get:
+      tags: [Adversary]
+      operationId: getEvasionCurve
+      summary: The evasion curve, plot-ready
+      description: |
+        Everything the chart needs in one call, from the latest succeeded campaign per
+        (strategy, mitigated). Recall is measured over the scenarios each campaign's
+        configuration detects at β=0. At most three strategies get their own colour
+        (the categorical palette caps at three); a fourth belongs in its own faceted panel.
+        A `mitigated` series draws as a dashed line in the same colour as its unmitigated
+        counterpart, with the area between shaded — the gap is the improvement.
+      parameters:
+        - { name: base_dataset, in: query, required: true, schema: { $ref: '#/components/schemas/DatasetId' } }
+        - { name: metric, in: query, schema: { type: string, enum: [scenario_recall, pairwise_recall, pairwise_precision], default: scenario_recall } }
+        - { name: floor,  in: query, description: Acceptable detection floor for the reference line, schema: { type: number, default: 0.7 } }
+      responses:
+        '200': { description: Curve, content: { application/json: { schema: { $ref: '#/components/schemas/EvasionCurve' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────────── Rules
+  /rules:
+    get:
+      tags: [Rules]
+      operationId: listRules
+      summary: Detection rules with learned confidence
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties: { data: { type: array, items: { $ref: '#/components/schemas/RuleStat' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /suppressions:
+    get:
+      tags: [Rules]
+      operationId: listSuppressions
+      summary: Active rule and entity suppressions
+      responses:
+        '200':
+          description: Suppressions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties: { data: { type: array, items: { $ref: '#/components/schemas/Suppression' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /suppressions/{suppressionId}:
+    delete:
+      tags: [Rules]
+      operationId: deleteSuppression
+      summary: Remove a suppression (role `lead`)
+      parameters: [ { name: suppressionId, in: path, required: true, schema: { type: integer, format: int64 } } ]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────────── Assets
+  /assets:
+    get:
+      tags: [Assets]
+      operationId: listAssets
+      summary: CMDB
+      parameters:
+        - { name: min_criticality, in: query, schema: { type: integer, minimum: 1, maximum: 10 } }
+        - { name: data_class, in: query, schema: { $ref: '#/components/schemas/DataClass' } }
+      responses:
+        '200':
+          description: Assets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties: { data: { type: array, items: { $ref: '#/components/schemas/Asset' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /assets/{hostname}:
+    parameters:
+      - { name: hostname, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' } }
+    get:
+      tags: [Assets]
+      operationId: getAsset
+      summary: One asset
+      responses:
+        '200': { description: Asset, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Assets]
+      operationId: upsertAsset
+      summary: Create or replace an asset (role `lead`; applies from the next run)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AssetUpsert' } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Asset' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ───────────────────────────────── Compliance
+  /compliance/cases:
+    get:
+      tags: [Compliance]
+      operationId: listCases
+      summary: Compliance cases with live deadline state
+      parameters:
+        - { name: dataset_id, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string, enum: [open, overdue, closed, all], default: open } }
+      responses:
+        '200':
+          description: Cases
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, server_time]
+                properties:
+                  server_time: { type: string, format: date-time, description: Lets the client correct clock drift }
+                  data: { type: array, items: { $ref: '#/components/schemas/ComplianceCase' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /compliance/cases/{caseId}:
+    parameters: [ { $ref: '#/components/parameters/CaseIdPath' } ]
+    get:
+      tags: [Compliance]
+      operationId: getCase
+      summary: Case detail including evidence timeline
+      responses:
+        '200': { description: Case, content: { application/json: { schema: { $ref: '#/components/schemas/ComplianceCaseDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /compliance/cases/{caseId}/drafts/{track}:
+    parameters:
+      - $ref: '#/components/parameters/CaseIdPath'
+      - $ref: '#/components/parameters/TrackPath'
+    get:
+      tags: [Compliance]
+      operationId: getDraft
+      summary: Auto-drafted report for one track
+      parameters: [ { name: format, in: query, schema: { type: string, enum: [json, markdown], default: json } } ]
+      responses:
+        '200':
+          description: Draft
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Draft' } }
+            text/markdown:    { schema: { type: string } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /compliance/cases/{caseId}/tracks/{track}/submission:
+    parameters:
+      - $ref: '#/components/parameters/CaseIdPath'
+      - $ref: '#/components/parameters/TrackPath'
+    post:
+      tags: [Compliance]
+      operationId: recordSubmission
+      summary: Record that a human submitted this track (role `lead`)
+      description: Prahari never contacts a regulator. This records who submitted, when, and the reference.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/SubmissionCreate' } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/ComplianceCase' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /governance/retention:
+    get:
+      tags: [Compliance]
+      operationId: getRetention
+      summary: Log retention policy and storage inventory (CERT-In 180 days)
+      description: |
+        `mechanism` is `partition_drop` on Postgres and `delete_by_timestamp` on SQLite.
+        `alert_entities` and `auth_events` appear alongside `alerts` because they are
+        partitioned on the same boundaries — otherwise retention would orphan entity rows
+        and this panel would report a policy the database is not honouring.
+      responses:
+        '200': { description: Retention state, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionState' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────────────── Evaluations
+  /evaluations:
+    post:
+      tags: [Evaluations]
+      operationId: createEvaluation
+      summary: Score a run against the dataset's ground truth (role `lead`)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [run_id]
+              properties:
+                run_id: { type: string, format: uuid }
+                analyst_model: { $ref: '#/components/schemas/AnalystModel' }
+      responses:
+        '201': { description: Evaluation, content: { application/json: { schema: { $ref: '#/components/schemas/Evaluation' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /evaluations/latest:
+    get:
+      tags: [Evaluations]
+      operationId: getLatestEvaluation
+      summary: Most recent evaluation for a dataset
+      parameters: [ { $ref: '#/components/parameters/DatasetIdQuery' } ]
+      responses:
+        '200': { description: Evaluation, content: { application/json: { schema: { $ref: '#/components/schemas/Evaluation' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────────── Audit
+  /audit:
+    get:
+      tags: [Audit]
+      operationId: listAudit
+      summary: Audit trail (append-only, hash-chained)
+      parameters:
+        - { name: subject, in: query, schema: { type: string } }
+        - { name: action,  in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, page]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/AuditEntry' } }
+                  page: { $ref: '#/components/schemas/PageInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /audit/verify:
+    get:
+      tags: [Audit]
+      operationId: verifyAudit
+      summary: Recompute the hash chain and report the first broken link
+      description: 'Always returns 200; a broken chain is `ok: false` with `broken_seq`.'
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/AuditVerifyResult' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    Limit:  { name: limit,  in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 50 } }
+    Cursor: { name: cursor, in: query, description: Opaque cursor from `page.next_cursor`, schema: { type: string } }
+    DatasetIdPath:  { name: datasetId,  in: path,  required: true, schema: { $ref: '#/components/schemas/DatasetId' } }
+    DatasetIdQuery: { name: dataset_id, in: query, required: true, schema: { $ref: '#/components/schemas/DatasetId' } }
+    RunIdPath:  { name: runId,  in: path,  required: true, schema: { type: string, format: uuid } }
+    RunIdQuery: { name: run_id, in: query, description: Defaults to the current run, schema: { type: string, format: uuid } }
+    IncidentIdPath: { name: incidentId, in: path, required: true, schema: { $ref: '#/components/schemas/IncidentId' } }
+    CampaignIdPath: { name: campaignId, in: path, required: true, schema: { $ref: '#/components/schemas/CampaignId' } }
+    CaseIdPath:  { name: caseId, in: path, required: true, schema: { type: string, pattern: '^CASE-[0-9]{4,}$' } }
+    TrackPath:   { name: track,  in: path, required: true, schema: { $ref: '#/components/schemas/TrackName' } }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 'Client-generated UUID; replays the stored response for 24 h (marked `Idempotent-Replayed: true`)'
+      schema: { type: string, maxLength: 128 }
+    LastEventId: { name: Last-Event-ID, in: header, schema: { type: string } }
+    AccessTokenQuery:
+      name: access_token
+      in: query
+      description: JWT for EventSource clients (SSE endpoints only)
+      schema: { type: string }
+
+  responses:
+    BadRequest:           { description: 'VALIDATION_FAILED, MALFORMED_JSON, INVALID_CURSOR', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Unauthorized:         { description: 'UNAUTHENTICATED, TOKEN_EXPIRED, INVALID_CREDENTIALS', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Forbidden:            { description: FORBIDDEN, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    NotFound:             { description: NOT_FOUND, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Conflict:             { description: 'RUN_IN_PROGRESS, INVALID_STATE, ALREADY_EXISTS, IDEMPOTENCY_KEY_REUSED, ALREADY_SUBMITTED, NOT_FRAGILE', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PreconditionFailed:   { description: PRECONDITION_FAILED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PreconditionRequired: { description: PRECONDITION_REQUIRED, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    PayloadTooLarge:      { description: PAYLOAD_TOO_LARGE, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    UnsupportedMediaType: { description: UNSUPPORTED_MEDIA_TYPE, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    Unprocessable:        { description: 'DATASET_EMPTY, NO_GROUND_TRUTH, RUN_NOT_SUCCEEDED, ADVERSARIAL_MIX', content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } } }
+    TooManyRequests:
+      description: RATE_LIMITED
+      headers: { Retry-After: { schema: { type: integer } } }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+
+  schemas:
+
+    # ---------- primitives ----------
+    DatasetId:  { type: string, pattern: '^ds_[a-z0-9_]{3,60}$', examples: [ds_20260929_s42] }
+    IncidentId: { type: string, pattern: '^INC-[0-9a-f]{8}([0-9a-f]{4})?$', examples: [INC-3f9a1c2e] }
+    CampaignId: { type: string, pattern: '^camp_[A-Za-z0-9]{6,32}$', examples: [camp_01J9ABCD] }
+    Severity:   { type: string, enum: [low, medium, high, critical] }
+    Source:     { type: string, enum: [auth, edr, network, cloud, email] }
+    Priority:   { type: string, enum: [P1, P2, P3, P4] }
+    Label:      { type: string, enum: [attack_chain, noise_cluster, single] }
+    CohesionLevel: { type: string, enum: [solid, moderate, fragile] }
+    IncidentStatus: { type: string, enum: [open, investigating, confirmed, false_positive, closed] }
+    DataClass:  { type: string, enum: [pii, financial, credentials, source_code] }
+    TrackName:  { type: string, enum: [certin, dpdp_intimation, dpdp_report] }
+    Role:       { type: string, enum: [analyst, lead] }
+    Strategy:   { type: string, enum: [entity_rotation, temporal_dilation, supernode_laundering, noise_flood] }
+    EntityKey:  { type: string, pattern: '^(user|host|ip|process|hash):.+$', examples: ['host:dc01'] }
+    Stage:
+      type: integer
+      minimum: 0
+      maximum: 6
+      description: |
+        Coarse kill-chain stage. 0 Recon/Resource Dev · 1 Initial Access · 2 Execution/Persistence ·
+        3 Priv Esc/Credential Access/Stealth/Defense Impairment · 4 Discovery/Lateral Movement ·
+        5 Collection/C2 · 6 Exfiltration/Impact. ATT&CK v19 split Defense Evasion into Stealth and
+        Defense Impairment; both map to stage 3.
+
+    PageInfo:
+      type: object
+      required: [limit]
+      properties:
+        limit: { type: integer }
+        next_cursor: { type: [string, 'null'] }
+
+    Bands:
+      type: object
+      description: |
+        Priority thresholds, calibrated per run from the observed score distribution and sized to
+        analyst capacity. Fixed thresholds compressed the usable range into 50–99, so a complete
+        chain never fell below P2 regardless of asset. Snapshotted into the run so past priorities
+        never shift.
+      required: [P1, P2, P3]
+      properties:
+        P1: { type: number }
+        P2: { type: number }
+        P3: { type: number }
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details with Prahari extensions
+      required: [type, title, status, code, request_id]
+      properties:
+        type:       { type: string, format: uri-reference }
+        title:      { type: string }
+        status:     { type: integer }
+        detail:     { type: string }
+        instance:   { type: string }
+        code:       { type: string, examples: [RUN_IN_PROGRESS] }
+        request_id: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:   { type: string }
+              message: { type: string }
+        active_run_id: { type: string, format: uuid, description: Present when code is RUN_IN_PROGRESS }
+
+    # ---------- auth ----------
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1, maxLength: 128 }
+    LoginResponse:
+      type: object
+      required: [access_token, token_type, expires_in, user]
+      properties:
+        access_token: { type: string }
+        token_type:   { type: string, const: Bearer }
+        expires_in:   { type: integer }
+        user:         { $ref: '#/components/schemas/User' }
+    User:
+      type: object
+      required: [user_id, display_name, role]
+      properties:
+        user_id:      { type: string }
+        display_name: { type: string }
+        role:         { $ref: '#/components/schemas/Role' }
+
+    Meta:
+      type: object
+      required: [version, dialect, attack_version, engine, llm_enabled, demo_mode]
+      properties:
+        version:        { type: string }
+        commit:         { type: string }
+        dialect:        { type: string, enum: [postgres, sqlite], description: Informational only; no business logic branches on it }
+        attack_version: { type: string, examples: ['19.0'] }
+        llm_enabled:    { type: boolean }
+        demo_mode:      { type: boolean }
+        engine:
+          type: object
+          additionalProperties: true
+          properties:
+            band_mode: { type: string, enum: [calibrated, fixed] }
+
+    # ---------- datasets ----------
+    SimulationRequest:
+      type: object
+      required: [seed]
+      properties:
+        seed:  { type: integer, format: int64 }
+        start: { type: string, format: date-time }
+        hours: { type: integer, minimum: 1, maximum: 168, default: 24 }
+        scenarios:
+          type: array
+          items: { type: string, enum: [A, B, C, D, E, F] }
+          default: [A, B, C, D, E, F]
+        noise_level: { type: string, enum: [low, normal, high], default: normal }
+        users: { type: integer, minimum: 10, maximum: 5000, default: 60 }
+
+    DatasetCreate:
+      type: object
+      required: [dataset_id, window_start, window_end]
+      properties:
+        dataset_id:   { $ref: '#/components/schemas/DatasetId' }
+        window_start: { type: string, format: date-time }
+        window_end:   { type: string, format: date-time }
+
+    Dataset:
+      type: object
+      required: [dataset_id, kind, window_start, window_end, counts, has_truth, created_at]
+      properties:
+        dataset_id: { $ref: '#/components/schemas/DatasetId' }
+        kind:       { type: string, enum: [simulated, ingested, adversarial] }
+        seed:       { type: [integer, 'null'], format: int64 }
+        window_start: { type: string, format: date-time }
+        window_end:   { type: string, format: date-time }
+        scenarios:  { type: array, items: { type: string } }
+        counts:
+          type: object
+          required: [auth_events, alerts]
+          properties:
+            auth_events: { type: integer }
+            alerts:      { type: integer }
+            alerts_by_detector: { type: integer }
+        has_truth:  { type: boolean }
+        parent_id:  { type: [string, 'null'], description: Set on adversarial variants }
+        current_run_id: { type: [string, 'null'], format: uuid }
+        created_at: { type: string, format: date-time }
+
+    AuthEventInput:
+      type: object
+      additionalProperties: false
+      required: [event_id, timestamp, username, src_ip, result, app]
+      properties:
+        event_id:  { type: string, maxLength: 64 }
+        timestamp: { type: string, format: date-time }
+        username:  { type: string, maxLength: 256 }
+        src_ip:    { type: string }
+        geo:       { type: string, examples: ['IN-DL'] }
+        result:    { type: string, enum: [success, failure] }
+        app:       { type: string, enum: [vpn, o365, rdp, ssh, web] }
+        is_admin:  { type: boolean, default: false }
+
+    Entities:
+      type: object
+      additionalProperties: false
+      properties:
+        users:     { type: array, maxItems: 20, items: { type: string, maxLength: 256 } }
+        hosts:     { type: array, maxItems: 20, items: { type: string, maxLength: 256 } }
+        ips:       { type: array, maxItems: 20, items: { type: string, maxLength: 64 } }
+        processes: { type: array, maxItems: 20, items: { type: string, maxLength: 512 } }
+        hashes:    { type: array, maxItems: 20, items: { type: string, pattern: '^[A-Fa-f0-9]{32,64}$' } }
+
+    AlertInput:
+      type: object
+      additionalProperties: false
+      required: [id, timestamp, source, rule_id, rule_name, severity, entities]
+      properties:
+        id:        { type: string, maxLength: 64 }
+        timestamp: { type: string, format: date-time }
+        source:    { $ref: '#/components/schemas/Source' }
+        rule_id:   { type: string, maxLength: 64 }
+        rule_name: { type: string, maxLength: 256 }
+        severity:  { $ref: '#/components/schemas/Severity' }
+        technique_id: { type: string, pattern: '^T[0-9]{4}(\.[0-9]{3})?$' }
+        entities:  { $ref: '#/components/schemas/Entities' }
+        raw:       { type: object, additionalProperties: true }
+
+    Alert:
+      type: object
+      required: [dataset_id, id, timestamp, source, rule_id, rule_name, severity, entities]
+      properties:
+        dataset_id: { $ref: '#/components/schemas/DatasetId' }
+        id:        { type: string }
+        timestamp: { type: string, format: date-time }
+        source:    { $ref: '#/components/schemas/Source' }
+        rule_id:   { type: string }
+        rule_name: { type: string }
+        severity:  { $ref: '#/components/schemas/Severity' }
+        technique_id: { type: [string, 'null'] }
+        tactic:    { type: [string, 'null'] }
+        stage:
+          oneOf: [ { $ref: '#/components/schemas/Stage' }, { type: 'null' } ]
+        entities:  { $ref: '#/components/schemas/Entities' }
+
+    AlertWithRaw:
+      allOf:
+        - $ref: '#/components/schemas/Alert'
+        - type: object
+          required: [raw]
+          properties:
+            raw: { type: object, additionalProperties: true }
+            entity_keys: { type: array, items: { $ref: '#/components/schemas/EntityKey' } }
+
+    AlertStats:
+      type: object
+      required: [total, by_source, by_severity, by_hour]
+      properties:
+        total:       { type: integer }
+        by_source:   { type: object, additionalProperties: { type: integer } }
+        by_severity: { type: object, additionalProperties: { type: integer } }
+        by_hour:
+          type: array
+          items:
+            type: object
+            required: [hour, count]
+            properties:
+              hour:  { type: string, format: date-time }
+              count: { type: integer }
+
+    IngestReport:
+      type: object
+      required: [received, accepted, rejected, duplicates, alerts_raised, errors, duration_ms]
+      properties:
+        received:   { type: integer }
+        accepted:   { type: integer }
+        rejected:   { type: integer }
+        duplicates: { type: integer }
+        alerts_raised: { type: integer, description: Alerts produced by auth detectors; 0 for alert ingest }
+        late_events: { type: integer }
+        errors:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [line, message]
+            properties:
+              line:    { type: integer }
+              field:   { type: string }
+              message: { type: string }
+        duration_ms: { type: integer }
+
+    # ---------- runs ----------
+    RunCreate:
+      type: object
+      required: [dataset_id]
+      properties:
+        dataset_id: { $ref: '#/components/schemas/DatasetId' }
+        overrides:
+          type: object
+          description: Engine parameter overrides for experiments; validated and snapshotted into the run
+          properties:
+            link_window:     { type: string, examples: ['2h'] }
+            supernode_ratio: { type: number, minimum: 0.001, maximum: 0.5 }
+            laundering_pass: { type: boolean }
+            weights:
+              type: object
+              description: Each positive, summing to 1
+              properties: { C: { type: number }, S: { type: number }, A: { type: number }, Q: { type: number } }
+            capacity:
+              type: object
+              properties:
+                p1_per_shift: { type: integer, minimum: 1 }
+                p2_per_shift: { type: integer, minimum: 1 }
+
+    RunStatus: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+
+    StageStat:
+      type: object
+      required: [stage, count, elapsed_ms]
+      properties:
+        stage: { type: string, enum: [load, filter, entities, link, launder, group, shape, cohesion, score, compliance, commit] }
+        count: { type: integer }
+        elapsed_ms: { type: integer }
+
+    Run:
+      type: object
+      required: [run_id, dataset_id, status, created_at, events_url]
+      properties:
+        run_id:     { type: string, format: uuid }
+        dataset_id: { $ref: '#/components/schemas/DatasetId' }
+        status:     { $ref: '#/components/schemas/RunStatus' }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        is_current: { type: boolean }
+        params:     { type: object, additionalProperties: true }
+        summary:
+          oneOf: [ { $ref: '#/components/schemas/RunSummary' }, { type: 'null' } ]
+        error:      { type: [string, 'null'] }
+        events_url: { type: string }
+
+    RunSummary:
+      type: object
+      required: [alerts_in, incidents, by_priority, by_label, stages, duration_ms]
+      properties:
+        alerts_in:  { type: integer }
+        alerts_suppressed: { type: integer }
+        entity_refs: { type: integer }
+        stoplisted_entities: { type: array, items: { $ref: '#/components/schemas/EntityKey' } }
+        laundering_links_recovered: { type: integer, description: Links recovered by the second pass that closes the supernode hole }
+        incidents:  { type: integer }
+        compression_ratio: { type: number }
+        by_priority: { type: object, additionalProperties: { type: integer } }
+        by_label:    { type: object, additionalProperties: { type: integer } }
+        by_cohesion: { type: object, additionalProperties: { type: integer } }
+        thresholds:  { $ref: '#/components/schemas/Bands' }
+        cases_opened: { type: integer }
+        stages: { type: array, items: { $ref: '#/components/schemas/StageStat' } }
+        duration_ms: { type: integer }
+
+    Receipt:
+      type: object
+      required: [run_id, scheme, input_hash, config_hash, output_hash, engine_version, attack_version]
+      properties:
+        run_id:      { type: string, format: uuid }
+        dataset_id:  { $ref: '#/components/schemas/DatasetId' }
+        scheme:      { type: string, const: v1, description: Versions the hashing scheme so a change is detectable }
+        input_hash:  { type: string }
+        config_hash: { type: string }
+        output_hash: { type: string }
+        engine_version: { type: string }
+        attack_version: { type: string }
+        dialect:     { type: string, enum: [postgres, sqlite] }
+        computed_at: { type: string, format: date-time }
+        config:      { type: object, additionalProperties: true }
+
+    RunStatusEvent:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/RunStatus' }
+    RunStageEvent:
+      allOf:
+        - $ref: '#/components/schemas/StageStat'
+        - type: object
+          required: [run_id]
+          properties: { run_id: { type: string, format: uuid } }
+    RunDoneEvent:
+      type: object
+      required: [run_id, summary]
+      properties:
+        run_id:  { type: string, format: uuid }
+        summary: { $ref: '#/components/schemas/RunSummary' }
+    RunErrorEvent:
+      type: object
+      required: [run_id, code, message]
+      properties:
+        run_id:  { type: string, format: uuid }
+        code:    { type: string }
+        message: { type: string }
+
+    GlobalEvent:
+      type: object
+      required: [type, at]
+      properties:
+        type: { type: string, enum: [run.started, run.finished, case.opened, incident.updated, campaign.finished] }
+        at:   { type: string, format: date-time }
+        dataset_id:  { type: string }
+        run_id:      { type: string, format: uuid }
+        incident_id: { type: string }
+        case_id:     { type: string }
+        campaign_id: { type: string }
+
+    # ---------- incidents ----------
+    Breakdown:
+      type: object
+      required: [C, S, A, Q, weights, risk, overrides]
+      properties:
+        C: { type: number, minimum: 0, maximum: 1, description: Chain completeness }
+        S: { type: number, minimum: 0, maximum: 1, description: Severity }
+        A: { type: number, minimum: 0, maximum: 1, description: Asset impact }
+        Q: { type: number, minimum: 0, maximum: 1, description: Confidence (noisy-OR over rule precision) }
+        weights:
+          type: object
+          required: [C, S, A, Q]
+          properties: { C: { type: number }, S: { type: number }, A: { type: number }, Q: { type: number } }
+        risk: { type: number, minimum: 0, maximum: 100 }
+        overrides: { type: array, items: { type: string } }
+        forward_stages: { type: integer, description: 'LIS length — an integer, distinct from Q' }
+        top_assets:
+          type: array
+          items:
+            type: object
+            required: [hostname, criticality]
+            properties:
+              hostname:    { type: string }
+              criticality: { type: integer }
+              data_classes: { type: array, items: { $ref: '#/components/schemas/DataClass' } }
+        rules:
+          type: array
+          items:
+            type: object
+            required: [rule_id, precision, alerts]
+            properties:
+              rule_id:   { type: string }
+              precision: { type: number }
+              alerts:    { type: integer }
+
+    IncidentTotals:
+      type: object
+      required: [incidents, alerts, by_priority]
+      properties:
+        incidents: { type: integer }
+        alerts:    { type: integer }
+        by_priority: { type: object, additionalProperties: { type: integer } }
+
+    IncidentSummary:
+      type: object
+      required: [incident_id, run_id, headline, label, priority, risk, confidence, cohesion, status, alert_count, stages, max_stage, first_seen, last_seen, assets, has_case]
+      properties:
+        incident_id: { $ref: '#/components/schemas/IncidentId' }
+        run_id:   { type: string, format: uuid }
+        rank:     { type: integer }
+        headline: { type: string }
+        label:    { $ref: '#/components/schemas/Label' }
+        priority: { $ref: '#/components/schemas/Priority' }
+        risk:     { type: number }
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: The noisy-OR factor Q. NOT chain completeness — label it "Conf" in the UI, never "Chain".
+        cohesion: { $ref: '#/components/schemas/CohesionLevel' }
+        status:   { $ref: '#/components/schemas/IncidentStatus' }
+        assignee: { type: [string, 'null'] }
+        alert_count: { type: integer }
+        stages:   { type: array, items: { $ref: '#/components/schemas/Stage' } }
+        max_stage: { $ref: '#/components/schemas/Stage' }
+        forward_stages: { type: integer }
+        first_seen: { type: string, format: date-time }
+        last_seen:  { type: string, format: date-time }
+        assets:     { type: array, items: { type: string } }
+        laundering_inferred: { type: boolean, description: Linked by the second pass rather than a direct shared entity }
+        has_case:   { type: boolean }
+        case_id:    { type: [string, 'null'] }
+
+    IncidentDetail:
+      allOf:
+        - $ref: '#/components/schemas/IncidentSummary'
+        - type: object
+          required: [breakdown, entities, techniques, sources]
+          properties:
+            cohesion_reason: { type: string, description: One sentence explaining the cohesion grade }
+            breakdown: { $ref: '#/components/schemas/Breakdown' }
+            entities:
+              type: array
+              items:
+                type: object
+                required: [key, weight, alerts]
+                properties:
+                  key:    { $ref: '#/components/schemas/EntityKey' }
+                  weight: { type: number, description: 'IDF weight ln(N/df)' }
+                  alerts: { type: integer }
+            techniques:
+              type: array
+              items:
+                type: object
+                required: [technique_id, tactic, stage, alerts]
+                properties:
+                  technique_id: { type: string }
+                  name:   { type: string }
+                  tactic: { type: string }
+                  stage:  { $ref: '#/components/schemas/Stage' }
+                  alerts: { type: integer }
+            sources: { type: object, additionalProperties: { type: integer } }
+            etag:    { type: string }
+
+    IncidentAlert:
+      allOf:
+        - $ref: '#/components/schemas/Alert'
+        - type: object
+          required: [on_chain]
+          properties: { on_chain: { type: boolean } }
+
+    IncidentPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        status:   { $ref: '#/components/schemas/IncidentStatus' }
+        assignee: { type: [string, 'null'] }
+
+    IncidentGraph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, type, label]
+            properties:
+              id:    { $ref: '#/components/schemas/EntityKey' }
+              type:  { type: string, enum: [user, host, ip, process, hash] }
+              label: { type: string }
+              criticality: { type: [integer, 'null'] }
+              data_classes: { type: array, items: { $ref: '#/components/schemas/DataClass' } }
+              external: { type: boolean, description: IP outside corporate ranges }
+              stoplisted: { type: boolean, description: A supernode shown only because a laundered link runs through it }
+        edges:
+          type: array
+          items:
+            type: object
+            required: [id, source, target, alert_id, ts, stage]
+            properties:
+              id:       { type: string }
+              source:   { $ref: '#/components/schemas/EntityKey' }
+              target:   { $ref: '#/components/schemas/EntityKey' }
+              alert_id: { type: string }
+              ts:       { type: string, format: date-time }
+              stage:    { $ref: '#/components/schemas/Stage' }
+              technique_id: { type: [string, 'null'] }
+              on_chain: { type: boolean }
+              order:    { type: integer }
+              is_bridge: { type: boolean, description: Removing this edge would split the incident; lets the UI draw fragile links differently }
+
+    IncidentTimeline:
+      type: object
+      required: [lanes, points, chain]
+      properties:
+        lanes:
+          type: array
+          items:
+            type: object
+            required: [stage, name, tactics]
+            properties:
+              stage:   { $ref: '#/components/schemas/Stage' }
+              name:    { type: string }
+              tactics: { type: array, items: { type: string } }
+        points:
+          type: array
+          items:
+            type: object
+            required: [alert_id, ts, stage, severity, rule_name, on_chain]
+            properties:
+              alert_id:  { type: string }
+              ts:        { type: string, format: date-time }
+              stage:     { $ref: '#/components/schemas/Stage' }
+              severity:  { $ref: '#/components/schemas/Severity' }
+              rule_name: { type: string }
+              on_chain:  { type: boolean }
+        chain: { type: array, items: { type: string }, description: 'Alert IDs on the forward path, in order' }
+
+    Narrative:
+      type: object
+      required: [incident_id, facts_hash, source, headline, sentences, recommended_actions, generated_at]
+      properties:
+        incident_id: { $ref: '#/components/schemas/IncidentId' }
+        facts_hash:  { type: string }
+        source:      { type: string, enum: [cache, llm, template] }
+        model:       { type: [string, 'null'] }
+        attempts:    { type: integer }
+        headline:    { type: string }
+        sentences:   { type: array, items: { $ref: '#/components/schemas/CitedText' } }
+        recommended_actions: { type: array, items: { $ref: '#/components/schemas/CitedText' } }
+        validation:
+          type: object
+          properties:
+            passed: { type: boolean }
+            issues: { type: array, items: { type: string } }
+        generated_at: { type: string, format: date-time }
+
+    CitedText:
+      type: object
+      required: [text, citations]
+      properties:
+        text: { type: string }
+        citations: { type: array, minItems: 1, items: { type: string } }
+
+    # ---------- cohesion ----------
+    BridgeEdge:
+      type: object
+      required: [alert_a, alert_b, entity_key, weight, left_size, right_size]
+      properties:
+        alert_a:    { type: string }
+        alert_b:    { type: string }
+        entity_key: { $ref: '#/components/schemas/EntityKey' }
+        weight:     { type: number, description: 'IDF weight of the entity behind this link; low means common, so weak evidence' }
+        left_size:  { type: integer, description: Alerts on alert_a's side }
+        right_size: { type: integer, description: Alerts on alert_b's side }
+
+    SplitHalf:
+      type: object
+      required: [alert_ids, alerts, max_stage, headline]
+      properties:
+        alert_ids: { type: array, items: { type: string } }
+        alerts:    { type: integer }
+        max_stage: { $ref: '#/components/schemas/Stage' }
+        headline:  { type: string }
+        est_risk:     { type: number }
+        est_priority: { $ref: '#/components/schemas/Priority' }
+
+    Cohesion:
+      type: object
+      required: [incident_id, cohesion, bridge_edges]
+      properties:
+        incident_id:  { $ref: '#/components/schemas/IncidentId' }
+        cohesion:     { $ref: '#/components/schemas/CohesionLevel' }
+        reason:       { type: string }
+        bridge_edges: { type: array, items: { $ref: '#/components/schemas/BridgeEdge' } }
+        split_preview:
+          description: Present only when cohesion is `fragile`
+          type: [object, 'null']
+          required: [left, right]
+          properties:
+            left:  { $ref: '#/components/schemas/SplitHalf' }
+            right: { $ref: '#/components/schemas/SplitHalf' }
+
+    SplitRequest:
+      type: object
+      additionalProperties: false
+      required: [bridge]
+      properties:
+        bridge:
+          type: object
+          required: [alert_a, alert_b]
+          properties:
+            alert_a: { type: string }
+            alert_b: { type: string }
+        note: { type: string, maxLength: 2000 }
+
+    SplitResult:
+      type: object
+      required: [run_id, source_incident_id, incidents, audit_seq]
+      properties:
+        run_id: { type: string, format: uuid, description: A NEW run; the original stays immutable }
+        source_incident_id: { $ref: '#/components/schemas/IncidentId' }
+        incidents:
+          type: array
+          maxItems: 2
+          description: The incidents now holding the two ends of the cut link (normally two)
+          items:
+            type: object
+            required: [incident_id, priority, risk, alert_count]
+            properties:
+              incident_id: { $ref: '#/components/schemas/IncidentId' }
+              priority:    { $ref: '#/components/schemas/Priority' }
+              risk:        { type: number }
+              alert_count: { type: integer }
+        audit_seq: { type: integer, format: int64 }
+
+    # ---------- counterfactuals ----------
+    Counterfactual:
+      type: object
+      required: [kind, label]
+      properties:
+        kind: { type: string, enum: [factor, asset, alert, boundary] }
+        label: { type: string, description: 'Plain-English statement, ready to render' }
+        factor: { type: string, enum: [C, S, A, Q] }
+        alert_id: { type: string }
+        value: { type: number, description: The substituted factor value (factor kind) }
+        risk: { type: number }
+        priority: { $ref: '#/components/schemas/Priority' }
+        delta: { type: number, description: Change in risk from current }
+        closes_case: { type: boolean, description: Whether this change would close the open compliance case }
+        target_value:
+          type: [number, 'null']
+          description: For `boundary` — the factor value at the band edge; null when unreachable
+        reachable:
+          type: boolean
+          description: For `boundary` — false when that factor alone cannot reach the band edge even at its extreme
+
+    CounterfactualSet:
+      type: object
+      required: [incident_id, current, counterfactuals]
+      properties:
+        incident_id: { $ref: '#/components/schemas/IncidentId' }
+        current:
+          type: object
+          required: [risk, priority, factors, thresholds]
+          properties:
+            risk:     { type: number }
+            priority: { $ref: '#/components/schemas/Priority' }
+            factors:
+              type: object
+              properties: { C: { type: number }, S: { type: number }, A: { type: number }, Q: { type: number } }
+            thresholds: { $ref: '#/components/schemas/Bands' }
+            override: { type: string, description: Present when a hard P1 floor applies }
+        counterfactuals: { type: array, items: { $ref: '#/components/schemas/Counterfactual' } }
+
+    # ---------- adversary ----------
+    CampaignCreate:
+      type: object
+      additionalProperties: false
+      required: [base_dataset, strategy]
+      properties:
+        base_dataset: { $ref: '#/components/schemas/DatasetId' }
+        strategy:  { $ref: '#/components/schemas/Strategy' }
+        budgets:
+          type: array
+          minItems: 2
+          maxItems: 11
+          items: { type: number, minimum: 0, maximum: 1 }
+          default: [0, 0.25, 0.5, 0.75, 1.0]
+        mitigated: { type: boolean, default: false, description: Run with the laundering mitigation pass enabled }
+        seed:      { type: integer, format: int64, default: 42 }
+
+    Campaign:
+      type: object
+      required: [campaign_id, base_dataset, strategy, budgets, mitigated, status, created_at]
+      properties:
+        campaign_id:  { $ref: '#/components/schemas/CampaignId' }
+        base_dataset: { $ref: '#/components/schemas/DatasetId' }
+        strategy:     { $ref: '#/components/schemas/Strategy' }
+        budgets:      { type: array, items: { type: number } }
+        mitigated:    { type: boolean }
+        seed:         { type: integer, format: int64 }
+        status:       { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+        created_by:   { type: string }
+        created_at:   { type: string, format: date-time }
+        events_url:   { type: string }
+
+    EvasionResult:
+      type: object
+      required: [budget, variant_dataset, run_id, scenario_recall, incidents, detected]
+      properties:
+        budget:          { type: number, minimum: 0, maximum: 1 }
+        variant_dataset: { $ref: '#/components/schemas/DatasetId' }
+        run_id:          { type: string, format: uuid }
+        scenario_recall: { type: number, minimum: 0, maximum: 1, description: Over the scenarios detected at β=0 }
+        pairwise_precision: { type: number }
+        pairwise_recall:    { type: number }
+        incidents:  { type: integer }
+        detected:   { type: boolean, description: Whether the flagship scenario (A when present) is still detected }
+        top_rank:   { type: [integer, 'null'], description: Where the flagship chain landed in the ranked queue }
+        scenarios_evaluated: { type: integer, description: Size of the recall denominator }
+
+    CampaignDetail:
+      allOf:
+        - $ref: '#/components/schemas/Campaign'
+        - type: object
+          required: [results]
+          properties:
+            results: { type: array, items: { $ref: '#/components/schemas/EvasionResult' } }
+            duration_ms: { type: integer }
+            error: { type: [string, 'null'] }
+
+    CampaignEvent:
+      type: object
+      required: [campaign_id]
+      properties:
+        campaign_id: { $ref: '#/components/schemas/CampaignId' }
+        budget: { type: number }
+        scenario_recall: { type: number }
+        detected: { type: boolean }
+        code:    { type: string }
+        message: { type: string }
+
+    EvasionCurve:
+      type: object
+      required: [base_dataset, metric, budgets, series, floor]
+      properties:
+        base_dataset: { $ref: '#/components/schemas/DatasetId' }
+        metric:  { type: string }
+        budgets: { type: array, items: { type: number } }
+        series:
+          type: array
+          items:
+            type: object
+            required: [strategy, mitigated, values]
+            properties:
+              strategy:  { $ref: '#/components/schemas/Strategy' }
+              mitigated: { type: boolean }
+              campaign_id: { $ref: '#/components/schemas/CampaignId' }
+              values:
+                type: array
+                items: { type: number }
+                description: One value per budget, same order as `budgets`
+              crosses_floor_at:
+                type: [number, 'null']
+                description: Interpolated budget where this series drops below `floor`; null if it never does
+        floor: { type: number }
+        floor_label: { type: string }
+        note: { type: string }
+
+    # ---------- feedback and rules ----------
+    FeedbackCreate:
+      type: object
+      additionalProperties: false
+      required: [verdict]
+      properties:
+        verdict: { type: string, enum: [confirmed, false_positive] }
+        note:    { type: string, maxLength: 2000 }
+        run_id:  { type: string, format: uuid }
+        suppress:
+          type: object
+          description: Lead only. Excludes this rule for this entity in future runs.
+          required: [rule_id, entity_key]
+          properties:
+            rule_id:    { type: string }
+            entity_key: { $ref: '#/components/schemas/EntityKey' }
+            expires_at: { type: string, format: date-time }
+
+    Feedback:
+      type: object
+      required: [feedback_id, incident_id, run_id, verdict, user_id, created_at]
+      properties:
+        feedback_id: { type: integer, format: int64 }
+        incident_id: { $ref: '#/components/schemas/IncidentId' }
+        run_id:  { type: string, format: uuid }
+        verdict: { type: string, enum: [confirmed, false_positive] }
+        note:    { type: [string, 'null'] }
+        user_id: { type: string }
+        created_at: { type: string, format: date-time }
+
+    FeedbackResult:
+      type: object
+      required: [feedback, status, rule_updates, rerun_recommended]
+      properties:
+        feedback: { $ref: '#/components/schemas/Feedback' }
+        status:   { $ref: '#/components/schemas/IncidentStatus' }
+        rule_updates:
+          type: array
+          items:
+            type: object
+            required: [rule_id, alpha, beta, precision_before, precision_after]
+            properties:
+              rule_id: { type: string }
+              alpha:   { type: number }
+              beta:    { type: number }
+              precision_before: { type: number }
+              precision_after:  { type: number }
+        suppression:
+          oneOf: [ { $ref: '#/components/schemas/Suppression' }, { type: 'null' } ]
+        rerun_recommended: { type: boolean }
+
+    RuleStat:
+      type: object
+      required: [rule_id, rule_name, source, alpha, beta, precision]
+      properties:
+        rule_id:   { type: string }
+        rule_name: { type: string }
+        source:    { $ref: '#/components/schemas/Source' }
+        technique_id: { type: [string, 'null'] }
+        alpha: { type: number }
+        beta:  { type: number }
+        precision: { type: number }
+        confirmed: { type: integer }
+        false_positives: { type: integer }
+        alerts_in_current_runs: { type: integer }
+
+    Suppression:
+      type: object
+      required: [suppression_id, rule_id, entity_key, created_by, created_at]
+      properties:
+        suppression_id: { type: integer, format: int64 }
+        rule_id:    { type: string }
+        entity_key: { $ref: '#/components/schemas/EntityKey' }
+        reason:     { type: [string, 'null'] }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+
+    # ---------- assets ----------
+    AssetUpsert:
+      type: object
+      additionalProperties: false
+      required: [role, criticality]
+      properties:
+        role: { type: string, examples: [domain_controller] }
+        criticality: { type: integer, minimum: 1, maximum: 10 }
+        data_classes: { type: array, uniqueItems: true, items: { $ref: '#/components/schemas/DataClass' } }
+        owner: { type: string }
+
+    Asset:
+      type: object
+      required: [hostname, role, criticality, data_classes, updated_at]
+      properties:
+        hostname: { type: string }
+        role: { type: string }
+        criticality: { type: integer, minimum: 1, maximum: 10 }
+        data_classes: { type: array, items: { $ref: '#/components/schemas/DataClass' } }
+        owner: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+
+    # ---------- compliance ----------
+    TrackState:
+      type: object
+      required: [track, authority, deadline, status, overdue, remaining_seconds]
+      properties:
+        track:     { $ref: '#/components/schemas/TrackName' }
+        authority: { type: string, enum: ['CERT-In', 'Data Protection Board of India'] }
+        basis:     { type: string }
+        deadline:  { type: string, format: date-time }
+        deadline_kind:
+          type: string
+          enum: [statutory, internal_sla]
+          description: '`dpdp_intimation` is "without delay" in law; Prahari applies a 1 h internal SLA'
+        status:    { type: string, enum: [pending, drafted, submitted] }
+        overdue:   { type: boolean }
+        remaining_seconds: { type: integer, description: Negative when overdue; computed at server_time }
+        submitted_at: { type: [string, 'null'], format: date-time }
+        submitted_by: { type: [string, 'null'] }
+        reference:    { type: [string, 'null'] }
+
+    ComplianceCase:
+      type: object
+      required: [case_id, incident_id, dataset_id, detected_at, trigger, tracks]
+      properties:
+        case_id:     { type: string }
+        incident_id: { $ref: '#/components/schemas/IncidentId' }
+        dataset_id:  { $ref: '#/components/schemas/DatasetId' }
+        run_id:      { type: string, format: uuid, description: The run that first triggered the case }
+        priority:    { $ref: '#/components/schemas/Priority' }
+        headline:    { type: string }
+        state:       { type: string, enum: [open, overdue, closed] }
+        detected_at: { type: string, format: date-time, description: 'Frozen at first trigger; never recomputed, so a re-run cannot move the clock' }
+        trigger:
+          type: object
+          required: [priority, max_stage, assets, data_classes]
+          properties:
+            priority:  { $ref: '#/components/schemas/Priority' }
+            max_stage: { $ref: '#/components/schemas/Stage' }
+            assets:    { type: array, items: { type: string } }
+            data_classes: { type: array, items: { $ref: '#/components/schemas/DataClass' } }
+        tracks:
+          type: array
+          minItems: 3
+          items: { $ref: '#/components/schemas/TrackState' }
+
+    ComplianceCaseDetail:
+      allOf:
+        - $ref: '#/components/schemas/ComplianceCase'
+        - type: object
+          required: [evidence, evidence_hash]
+          properties:
+            server_time: { type: string, format: date-time }
+            evidence_hash: { type: string }
+            evidence:
+              type: array
+              items:
+                type: object
+                required: [ts, kind, ref]
+                properties:
+                  ts:   { type: string, format: date-time }
+                  kind: { type: string, enum: [alert, run, feedback, narrative, draft, submission] }
+                  ref:  { type: string }
+                  summary: { type: string }
+                  audit_seq: { type: integer, format: int64 }
+
+    Draft:
+      type: object
+      required: [case_id, track, generated_at, evidence_hash, fields, disclaimer]
+      properties:
+        case_id: { type: string }
+        track:   { $ref: '#/components/schemas/TrackName' }
+        generated_at: { type: string, format: date-time }
+        evidence_hash: { type: string }
+        disclaimer:
+          type: string
+          const: 'Auto-generated draft for review by the organisation. Not legal advice. Not submitted.'
+        fields: { type: object, additionalProperties: true }
+
+    SubmissionCreate:
+      type: object
+      additionalProperties: false
+      required: [submitted_at, reference]
+      properties:
+        submitted_at: { type: string, format: date-time }
+        reference: { type: string, maxLength: 128 }
+        note: { type: string, maxLength: 2000 }
+
+    RetentionState:
+      type: object
+      required: [policy_days, basis, units, next_run_at, mechanism]
+      properties:
+        policy_days: { type: integer, const: 180 }
+        basis: { type: string }
+        dialect: { type: string, enum: [postgres, sqlite] }
+        mechanism: { type: string, enum: [partition_drop, delete_by_timestamp] }
+        next_run_at: { type: string, format: date-time }
+        units:
+          type: array
+          items:
+            type: object
+            required: [table, name, from, to, rows, drop_after]
+            properties:
+              table: { type: string }
+              name:  { type: string }
+              from:  { type: string, format: date-time }
+              to:    { type: string, format: date-time }
+              rows:  { type: integer }
+              drop_after: { type: string, format: date-time }
+
+    # ---------- evaluation ----------
+    AnalystModel:
+      type: object
+      description: Assumptions for simulated time-to-triage. Always report the baseline alongside the reduction.
+      properties:
+        seconds_per_alert:    { type: integer, default: 30 }
+        seconds_per_incident: { type: integer, default: 180 }
+
+    Evaluation:
+      type: object
+      required: [evaluation_id, run_id, dataset_id, created_at, metrics, scenarios, baseline]
+      properties:
+        evaluation_id: { type: string }
+        run_id:     { type: string, format: uuid }
+        dataset_id: { $ref: '#/components/schemas/DatasetId' }
+        created_at: { type: string, format: date-time }
+        analyst_model: { $ref: '#/components/schemas/AnalystModel' }
+        baseline: { type: string, description: 'Stated in words, because a reduction without its baseline is not evidence' }
+        metrics:
+          type: object
+          required: [compression_ratio, scenario_recall, pairwise_precision, pairwise_recall, precision_at_5]
+          properties:
+            compression_ratio:  { type: number }
+            scenario_recall:    { type: number }
+            pairwise_precision: { type: number, description: Over alert pairs with at least one scenario alert }
+            pairwise_recall:    { type: number }
+            mean_purity:        { type: number }
+            precision_at_5:     { type: number }
+            cohesion_accuracy:
+              type: number
+              description: Of incidents flagged fragile, the fraction whose proposed halves belong to different truth groups
+            fragile_incidents: { type: integer }
+            time_to_first_attack_baseline_s: { type: integer }
+            time_to_first_attack_prahari_s:  { type: integer }
+            triage_time_reduction: { type: number }
+            noise_in_top10: { type: number }
+            correlate_ms:   { type: integer }
+        scenarios:
+          type: array
+          items:
+            type: object
+            required: [scenario, detected, coverage, expected_priority]
+            properties:
+              scenario: { type: string }
+              name: { type: string }
+              detected: { type: boolean }
+              coverage: { type: number }
+              incident_id: { type: [string, 'null'] }
+              rank: { type: [integer, 'null'] }
+              expected_priority: { $ref: '#/components/schemas/Priority' }
+              actual_priority:
+                oneOf: [ { $ref: '#/components/schemas/Priority' }, { type: 'null' } ]
+              miss_reason: { type: [string, 'null'] }
+
+    # ---------- audit ----------
+    AuditEntry:
+      type: object
+      required: [seq, ts, actor, action, payload, prev_hash, hash]
+      properties:
+        seq:   { type: integer, format: int64 }
+        ts:    { type: string, format: date-time }
+        actor: { type: string }
+        action: { type: string, examples: [feedback.created] }
+        subject: { type: [string, 'null'] }
+        payload: { type: object, additionalProperties: true }
+        prev_hash: { type: string }
+        hash: { type: string }
+
+    AuditVerifyResult:
+      type: object
+      required: [ok, checked, head_hash, verified_at]
+      properties:
+        ok: { type: boolean }
+        checked: { type: integer, format: int64 }
+        head_hash: { type: string }
+        broken_seq: { type: [integer, 'null'], format: int64 }
+        verified_at: { type: string, format: date-time }

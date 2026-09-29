@@ -1,0 +1,170 @@
+{
+  "bands": {
+    "P1": 67.82,
+    "P2": 63.83,
+    "P3": 34.01
+  },
+  "top_incidents": [
+    {
+      "id": "INC-01cd74bc",
+      "priority": "P1",
+      "risk": 100,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 9
+    },
+    {
+      "id": "INC-9f4fcc86",
+      "priority": "P1",
+      "risk": 100,
+      "cohesion": "fragile",
+      "label": "attack_chain",
+      "alerts": 18
+    },
+    {
+      "id": "INC-1c5af562",
+      "priority": "P1",
+      "risk": 88.75,
+      "cohesion": "solid",
+      "label": "attack_chain",
+      "alerts": 5
+    },
+    {
+      "id": "INC-0f8fa5e3",
+      "priority": "P1",
+      "risk": 70.01,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 43
+    },
+    {
+      "id": "INC-c49526e6",
+      "priority": "P1",
+      "risk": 67.82,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 7
+    },
+    {
+      "id": "INC-95c3df4e",
+      "priority": "P2",
+      "risk": 66.38,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 40
+    },
+    {
+      "id": "INC-a35b7ca3",
+      "priority": "P2",
+      "risk": 65.97,
+      "cohesion": "solid",
+      "label": "attack_chain",
+      "alerts": 5
+    },
+    {
+      "id": "INC-0e23d1ab",
+      "priority": "P2",
+      "risk": 65.46,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 24
+    },
+    {
+      "id": "INC-161e12f9",
+      "priority": "P2",
+      "risk": 65.46,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 13
+    },
+    {
+      "id": "INC-0a4b16e6",
+      "priority": "P2",
+      "risk": 64.64,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 7
+    },
+    {
+      "id": "INC-35c76112",
+      "priority": "P2",
+      "risk": 64.61,
+      "cohesion": "solid",
+      "label": "attack_chain",
+      "alerts": 8
+    },
+    {
+      "id": "INC-7c498bac",
+      "priority": "P2",
+      "risk": 64.32,
+      "cohesion": "fragile",
+      "label": "attack_chain",
+      "alerts": 83
+    },
+    {
+      "id": "INC-11a869ff",
+      "priority": "P2",
+      "risk": 64.13,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 21
+    },
+    {
+      "id": "INC-b2048a1d",
+      "priority": "P2",
+      "risk": 64.13,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 33
+    },
+    {
+      "id": "INC-1327af83",
+      "priority": "P2",
+      "risk": 63.83,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 16
+    },
+    {
+      "id": "INC-4e792d9c",
+      "priority": "P2",
+      "risk": 63.83,
+      "cohesion": "solid",
+      "label": "attack_chain",
+      "alerts": 5
+    },
+    {
+      "id": "INC-d52e5b48",
+      "priority": "P2",
+      "risk": 63.83,
+      "cohesion": "solid",
+      "label": "attack_chain",
+      "alerts": 5
+    },
+    {
+      "id": "INC-f04fd0f8",
+      "priority": "P3",
+      "risk": 61.62,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 77
+    },
+    {
+      "id": "INC-a501024d",
+      "priority": "P3",
+      "risk": 61.38,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 55
+    },
+    {
+      "id": "INC-a42d264e",
+      "priority": "P3",
+      "risk": 57.53,
+      "cohesion": "moderate",
+      "label": "attack_chain",
+      "alerts": 31
+    }
+  ],
+  "output_hash": "sha256:807fb8dc58ae3a66dbb72ad3c36518f2f17a467f7df3ba0d85cd5c6bfbbb6db4"
+}
