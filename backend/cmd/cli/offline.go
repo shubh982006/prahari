@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"prahari/internal/config"
 	"prahari/internal/core/attack"
 	"prahari/internal/core/correlate"
 	"prahari/internal/core/evaluate"
@@ -32,7 +33,7 @@ type common struct {
 }
 
 func (c *common) register(fs *flag.FlagSet) {
-	fs.StringVar(&c.bundle, "attack", defaultBundle, "ATT&CK STIX bundle")
+	fs.StringVar(&c.bundle, "attack", config.Resolve(defaultBundle), "ATT&CK STIX bundle")
 	fs.DurationVar(&c.window, "window", 2*time.Hour, "link window")
 	fs.BoolVar(&c.noLaunder, "no-launder", false, "disable the laundering pass")
 	fs.StringVar(&c.bandMode, "bands", "calibrated", "calibrated | fixed")

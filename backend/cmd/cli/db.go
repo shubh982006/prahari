@@ -9,12 +9,13 @@ import (
 
 	"prahari/internal/adapters/store/sqlstore"
 	"prahari/internal/app"
+	"prahari/internal/config"
 )
 
 func dsnFlag(fs *flag.FlagSet) *string {
 	def := os.Getenv("PRAHARI_DB_DSN")
 	if def == "" {
-		def = "file:prahari.db"
+		def = config.SQLiteDSN()
 	}
 	return fs.String("dsn", def, "database DSN (postgres://… or a SQLite path)")
 }

@@ -1,0 +1,5 @@
+# LF everywhere: golden files, migrations and anything hashed must be
+# byte-identical on every machine, or the determinism receipt lies.
+* text=auto eol=lf
+*.exe binary
+*.db binary
