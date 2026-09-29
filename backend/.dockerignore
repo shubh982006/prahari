@@ -1,0 +1,6 @@
+prahari.db*
+*.db-wal
+*.db-shm
+*.exe
+data/truth/
+config.yaml

@@ -1,0 +1,58 @@
+# The full path (design §19): Postgres 16, a one-shot migration, the API.
+#
+#   docker compose up --build            # API on http://localhost:8000
+#   docker compose up -d db              # just Postgres, for the dialect tests:
+#   PRAHARI_TEST_PG='postgres://prahari:prahari@localhost:55432/postgres?sslmode=disable' \
+#     go -C backend test ./...
+#
+# Demo credentials (demo mode): meow / prahari-lead, analyst / prahari-analyst.
+# Outside a demo, set PRAHARI_DEMO_MODE=false and a 32+ byte PRAHARI_JWT_SECRET.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: prahari
+      POSTGRES_PASSWORD: prahari
+      POSTGRES_DB: prahari
+    ports:
+      # host port kept off 5432 so an existing local Postgres does not clash
+      - "${PRAHARI_PG_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prahari -d prahari"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  migrate:
+    image: prahari-backend:local
+    build: ./backend
+    entrypoint: ["/app/cli", "migrate"]
+    environment:
+      PRAHARI_DB_DSN: postgres://prahari:prahari@db:5432/prahari?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    image: prahari-backend:local
+    build: ./backend
+    environment:
+      PRAHARI_DB_DSN: postgres://prahari:prahari@db:5432/prahari?sslmode=disable
+      PRAHARI_AUTO_MIGRATE: "false"
+      PRAHARI_DEMO_MODE: ${PRAHARI_DEMO_MODE:-true}
+      PRAHARI_JWT_SECRET: ${PRAHARI_JWT_SECRET:-}
+      PRAHARI_LLM_ENABLED: "false"
+    ports:
+      - "8000:8000"
+    volumes:
+      - truth:/app/data/truth
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  truth:

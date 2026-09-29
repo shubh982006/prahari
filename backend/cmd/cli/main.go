@@ -16,6 +16,7 @@ const usage = `prahari cli
   adversary  --strategy S [--budgets 0,0.25,...] [--mitigated] [--seeds 1-5]
   migrate    [--dsn DSN]                                   apply migrations
   verify     [--dsn DSN]                                   verify the audit hash chain
+  failures   [--seeds 1-10] [--adv-seeds 1-5]                measure every known miss; prints failure-analysis.md
   cmdb                                                     print the demo CMDB as JSON
 `
 
@@ -26,7 +27,7 @@ func main() {
 	}
 	cmds := map[string]func([]string) error{
 		"evaluate": cmdEvaluate, "inspect": cmdInspect, "simulate": cmdSimulate, "bench": cmdBench,
-		"adversary": cmdAdversary, "migrate": cmdMigrate, "verify": cmdVerify, "cmdb": cmdCMDB,
+		"adversary": cmdAdversary, "failures": cmdFailures, "migrate": cmdMigrate, "verify": cmdVerify, "cmdb": cmdCMDB,
 	}
 	f, ok := cmds[os.Args[1]]
 	if !ok {
