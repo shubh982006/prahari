@@ -1,0 +1,25 @@
+{
+  "attack_version": "19.0",
+  "commit": "dev",
+  "demo_mode": true,
+  "dialect": "sqlite",
+  "engine": {
+    "band_mode": "calibrated",
+    "capacity": {
+      "p1_per_shift": 5,
+      "p2_per_shift": 10
+    },
+    "laundering_pass": true,
+    "link_window": "2h",
+    "supernode_min_df": 20,
+    "supernode_ratio": 0.05,
+    "weights": {
+      "A": 0.3,
+      "C": 0.35,
+      "Q": 0.15,
+      "S": 0.2
+    }
+  },
+  "llm_enabled": false,
+  "version": "2.0.0"
+}

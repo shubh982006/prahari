@@ -1,7 +1,7 @@
 # Prahari — API Contract v1
 
 **Version** 2.0 · 29 Sep 2026 · **supersedes** the v1.0 contract
-**Machine-readable source of truth:** [`openapi.yaml`](./openapi.yaml) — if the two disagree, **the YAML wins** and this file gets fixed.
+**Machine-readable source of truth:** [`openapi.yaml`](../backend/api/openapi.yaml) — if the two disagree, **the YAML wins** and this file gets fixed.
 
 New in this version: cohesion and split (§8), counterfactuals (§9), determinism receipts (§10), the adversary bench (§11). Changed: incident identity is now `(run_id, incident_id)`, compliance has three tracks, priority bands are calibrated per run.
 

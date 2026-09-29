@@ -1,0 +1,326 @@
+[
+  {
+    "campaign_id": "camp_ZC2J3V9G62",
+    "base_dataset": "ds_20260929_s42",
+    "strategy": "temporal_dilation",
+    "budgets": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "mitigated": false,
+    "seed": 42,
+    "status": "succeeded",
+    "created_by": "u_meow",
+    "created_at": "2026-09-29T16:36:24.750227Z",
+    "events_url": "/api/v1/adversary/campaigns/camp_ZC2J3V9G62/events",
+    "results": [
+      {
+        "budget": 0,
+        "variant_dataset": "ds_adv_zc2j3v9g62_b000",
+        "run_id": "01a0ee06-4bb4-79ac-ab05-8905cd00fb94",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.52,
+        "pairwise_recall": 0.9,
+        "incidents": 147,
+        "detected": true,
+        "top_rank": 2,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.25,
+        "variant_dataset": "ds_adv_zc2j3v9g62_b025",
+        "run_id": "01a0ee06-4da2-7056-8b1a-dcd79f780718",
+        "scenario_recall": 0.5,
+        "pairwise_precision": 0.47,
+        "pairwise_recall": 0.36,
+        "incidents": 157,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.5,
+        "variant_dataset": "ds_adv_zc2j3v9g62_b050",
+        "run_id": "01a0ee06-4fb4-72b0-8d79-193e76725b09",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.04,
+        "pairwise_recall": 0.13,
+        "incidents": 164,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.75,
+        "variant_dataset": "ds_adv_zc2j3v9g62_b075",
+        "run_id": "01a0ee06-51b9-7800-954c-0e055d0ac6a5",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.07,
+        "pairwise_recall": 0.12,
+        "incidents": 165,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 1,
+        "variant_dataset": "ds_adv_zc2j3v9g62_b100",
+        "run_id": "01a0ee06-53dc-7cda-b741-d6472cd26b59",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.1,
+        "pairwise_recall": 0.11,
+        "incidents": 168,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      }
+    ],
+    "duration_ms": 2654
+  },
+  {
+    "campaign_id": "camp_62X4BF76GT",
+    "base_dataset": "ds_20260929_s42",
+    "strategy": "temporal_dilation",
+    "budgets": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "mitigated": true,
+    "seed": 42,
+    "status": "succeeded",
+    "created_by": "u_meow",
+    "created_at": "2026-09-29T16:36:27.781412Z",
+    "events_url": "/api/v1/adversary/campaigns/camp_62X4BF76GT/events",
+    "results": [
+      {
+        "budget": 0,
+        "variant_dataset": "ds_adv_62x4bf76gt_b000",
+        "run_id": "01a0ee06-5742-7f31-8f90-2900485f8636",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.52,
+        "pairwise_recall": 0.9,
+        "incidents": 146,
+        "detected": true,
+        "top_rank": 1,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.25,
+        "variant_dataset": "ds_adv_62x4bf76gt_b025",
+        "run_id": "01a0ee06-593c-7f1e-aefe-d79abde49291",
+        "scenario_recall": 0.5,
+        "pairwise_precision": 0.47,
+        "pairwise_recall": 0.36,
+        "incidents": 156,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.5,
+        "variant_dataset": "ds_adv_62x4bf76gt_b050",
+        "run_id": "01a0ee06-5b51-78f3-bfc6-31e4b787bb05",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.04,
+        "pairwise_recall": 0.13,
+        "incidents": 163,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.75,
+        "variant_dataset": "ds_adv_62x4bf76gt_b075",
+        "run_id": "01a0ee06-5d9f-7405-bdf0-1b898f7c6292",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.07,
+        "pairwise_recall": 0.12,
+        "incidents": 164,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 1,
+        "variant_dataset": "ds_adv_62x4bf76gt_b100",
+        "run_id": "01a0ee06-5fe8-70a1-bf2a-629b22a8e8d5",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.1,
+        "pairwise_recall": 0.11,
+        "incidents": 167,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      }
+    ],
+    "duration_ms": 2767
+  },
+  {
+    "campaign_id": "camp_HF8K45K586",
+    "base_dataset": "ds_20260929_s42",
+    "strategy": "supernode_laundering",
+    "budgets": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "mitigated": false,
+    "seed": 42,
+    "status": "succeeded",
+    "created_by": "u_meow",
+    "created_at": "2026-09-29T16:36:30.814583Z",
+    "events_url": "/api/v1/adversary/campaigns/camp_HF8K45K586/events",
+    "results": [
+      {
+        "budget": 0,
+        "variant_dataset": "ds_adv_hf8k45k586_b000",
+        "run_id": "01a0ee06-6320-7d6e-bd10-eb876c9904d0",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.52,
+        "pairwise_recall": 0.9,
+        "incidents": 147,
+        "detected": true,
+        "top_rank": 1,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.25,
+        "variant_dataset": "ds_adv_hf8k45k586_b025",
+        "run_id": "01a0ee06-655c-7401-ad47-e545d394a7d2",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.48,
+        "pairwise_recall": 0.67,
+        "incidents": 151,
+        "detected": true,
+        "top_rank": 2,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.5,
+        "variant_dataset": "ds_adv_hf8k45k586_b050",
+        "run_id": "01a0ee06-678e-7c7c-b125-fa2ca3f4740d",
+        "scenario_recall": 0.5,
+        "pairwise_precision": 0.43,
+        "pairwise_recall": 0.56,
+        "incidents": 155,
+        "detected": true,
+        "top_rank": 1,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.75,
+        "variant_dataset": "ds_adv_hf8k45k586_b075",
+        "run_id": "01a0ee06-6971-7fb6-99ff-70ba62264efe",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.26,
+        "pairwise_recall": 0.21,
+        "incidents": 164,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 1,
+        "variant_dataset": "ds_adv_hf8k45k586_b100",
+        "run_id": "01a0ee06-6b07-7fb0-826b-a9998f66cc85",
+        "scenario_recall": 0,
+        "pairwise_precision": 0.11,
+        "pairwise_recall": 0.05,
+        "incidents": 172,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      }
+    ],
+    "duration_ms": 2539
+  },
+  {
+    "campaign_id": "camp_5V5BRDDTMD",
+    "base_dataset": "ds_20260929_s42",
+    "strategy": "supernode_laundering",
+    "budgets": [
+      0,
+      0.25,
+      0.5,
+      0.75,
+      1
+    ],
+    "mitigated": true,
+    "seed": 42,
+    "status": "succeeded",
+    "created_by": "u_meow",
+    "created_at": "2026-09-29T16:36:33.844494Z",
+    "events_url": "/api/v1/adversary/campaigns/camp_5V5BRDDTMD/events",
+    "results": [
+      {
+        "budget": 0,
+        "variant_dataset": "ds_adv_5v5brddtmd_b000",
+        "run_id": "01a0ee06-6eed-7d0b-95a6-3a7b26a31287",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.52,
+        "pairwise_recall": 0.9,
+        "incidents": 146,
+        "detected": true,
+        "top_rank": 2,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.25,
+        "variant_dataset": "ds_adv_5v5brddtmd_b025",
+        "run_id": "01a0ee06-7124-7d25-9a61-05c0eaaadf0c",
+        "scenario_recall": 1,
+        "pairwise_precision": 0.4,
+        "pairwise_recall": 0.69,
+        "incidents": 145,
+        "detected": true,
+        "top_rank": 2,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.5,
+        "variant_dataset": "ds_adv_5v5brddtmd_b050",
+        "run_id": "01a0ee06-7371-7f31-833a-6f9381791c85",
+        "scenario_recall": 0.75,
+        "pairwise_precision": 0.43,
+        "pairwise_recall": 0.69,
+        "incidents": 145,
+        "detected": true,
+        "top_rank": 1,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 0.75,
+        "variant_dataset": "ds_adv_5v5brddtmd_b075",
+        "run_id": "01a0ee06-755f-7a0c-9e3a-0c4e218a5541",
+        "scenario_recall": 0.75,
+        "pairwise_precision": 0.14,
+        "pairwise_recall": 0.52,
+        "incidents": 144,
+        "detected": true,
+        "top_rank": 2,
+        "scenarios_evaluated": 4
+      },
+      {
+        "budget": 1,
+        "variant_dataset": "ds_adv_5v5brddtmd_b100",
+        "run_id": "01a0ee06-7723-7cfb-b017-a8be990807af",
+        "scenario_recall": 0.5,
+        "pairwise_precision": 0.31,
+        "pairwise_recall": 0.48,
+        "incidents": 145,
+        "detected": false,
+        "top_rank": null,
+        "scenarios_evaluated": 4
+      }
+    ],
+    "duration_ms": 2603
+  }
+]

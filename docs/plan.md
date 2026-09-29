@@ -1,7 +1,7 @@
 # Prahari Backend — Build Plan
 
 **Version** 2.0 · 29 Sep 2026
-**Companions** [`design.md`](./design.md) · [`api-contract.md`](./api-contract.md) · [`openapi.yaml`](./openapi.yaml)
+**Companions** [`design.md`](./design.md) · [`api-contract.md`](./api-contract.md) · [`openapi.yaml`](../backend/api/openapi.yaml)
 
 ---
 

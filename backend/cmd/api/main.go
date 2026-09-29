@@ -42,7 +42,7 @@ func main() {
 }
 
 func run() error {
-	cfgPath := flag.String("config", "config.yaml", "path to config.yaml (optional)")
+	cfgPath := flag.String("config", config.Resolve("config.yaml"), "path to config.yaml (optional)")
 	flag.Parse()
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -62,7 +62,7 @@ func run() error {
 
 	cat, err := attack.LoadFile(cfg.AttackBundle)
 	if err != nil {
-		return fmt.Errorf("ATT&CK bundle: %w (refusing to correlate without stage data)", err)
+		return fmt.Errorf("ATT&CK bundle: %w (refusing to correlate without stage data; set PRAHARI_HOME to the backend directory or PRAHARI_ATTACK_BUNDLE to the file)", err)
 	}
 	log.Info("attack bundle loaded", "version", cat.Version, "techniques", cat.Len(), "hash", cat.Hash)
 

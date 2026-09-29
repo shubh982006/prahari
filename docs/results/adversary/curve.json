@@ -1,0 +1,68 @@
+{
+  "base_dataset": "ds_20260929_s42",
+  "metric": "scenario_recall",
+  "budgets": [
+    0,
+    0.25,
+    0.5,
+    0.75,
+    1
+  ],
+  "series": [
+    {
+      "strategy": "temporal_dilation",
+      "mitigated": false,
+      "campaign_id": "camp_ZC2J3V9G62",
+      "values": [
+        1,
+        0.5,
+        0,
+        0,
+        0
+      ],
+      "crosses_floor_at": 0.15
+    },
+    {
+      "strategy": "temporal_dilation",
+      "mitigated": true,
+      "campaign_id": "camp_62X4BF76GT",
+      "values": [
+        1,
+        0.5,
+        0,
+        0,
+        0
+      ],
+      "crosses_floor_at": 0.15
+    },
+    {
+      "strategy": "supernode_laundering",
+      "mitigated": false,
+      "campaign_id": "camp_HF8K45K586",
+      "values": [
+        1,
+        1,
+        0.5,
+        0,
+        0
+      ],
+      "crosses_floor_at": 0.4
+    },
+    {
+      "strategy": "supernode_laundering",
+      "mitigated": true,
+      "campaign_id": "camp_5V5BRDDTMD",
+      "values": [
+        1,
+        1,
+        0.75,
+        0.75,
+        0.5
+      ],
+      "crosses_floor_at": 0.8
+    }
+  ],
+  "floor": 0.7,
+  "floor_label": "acceptable detection floor",
+  "note": "recall is measured over the scenarios detected at \u03b2=0 with each campaign's configuration"
+}

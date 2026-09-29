@@ -1,0 +1,22 @@
+# SQLite zero-setup database (and its WAL/SHM side files)
+prahari.db*
+*.db-wal
+*.db-shm
+
+# Binaries
+*.exe
+/backend/api
+/backend/cli
+/backend/bin/
+/bin/
+
+# Ground truth is written at simulation time and must never be committed
+# alongside a dataset — the engine never reads it.
+backend/data/truth/
+
+# Local config and editor noise
+backend/config.yaml
+.env
+.DS_Store
+.idea/
+.vscode/

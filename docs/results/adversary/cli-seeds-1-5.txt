@@ -1,0 +1,11 @@
+$ go run ./cmd/cli adversary --strategy temporal_dilation --seeds 1-5 --budgets 0,0.25,0.5,0.75,1
+scenario recall over scenarios detected at β=0, mean of 5 seeds (top rank of scenario A in brackets)
+strategy               mitig  β=0.00        β=0.25        β=0.50        β=0.75        β=1.00      
+temporal_dilation      false  1.00 [1,2,2,1,2]  0.50 [-,-,-,-,-]  0.00 [-,-,-,-,-]  0.00 [-,-,-,-,-]  0.00 [-,-,-,-,-]
+temporal_dilation      true   1.00 [1,2,2,1,1]  0.50 [-,-,-,-,-]  0.00 [-,-,-,-,-]  0.00 [-,-,-,-,-]  0.00 [-,-,-,-,-]
+
+$ go run ./cmd/cli adversary --strategy supernode_laundering --seeds 1-5 --budgets 0,0.25,0.5,0.75,1
+scenario recall over scenarios detected at β=0, mean of 5 seeds (top rank of scenario A in brackets)
+strategy               mitig  β=0.00        β=0.25        β=0.50        β=0.75        β=1.00      
+supernode_laundering   false  1.00 [1,2,2,1,2]  0.80 [1,1,2,-,1]  0.50 [1,1,-,1,2]  0.10 [-,-,-,-,-]  0.00 [-,-,-,-,-]
+supernode_laundering   true   1.00 [1,2,2,1,1]  0.80 [1,1,2,-,1]  0.55 [1,2,-,1,1]  0.25 [-,-,-,-,-]  0.35 [-,-,-,-,-]

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +56,7 @@ type Config struct {
 
 func Defaults() Config {
 	return Config{
-		DSN:            "file:prahari.db",
+		DSN:            DefaultDSN,
 		HTTPAddr:       ":8000",
 		Replicas:       1,
 		LinkWindow:     2 * time.Hour,
@@ -91,7 +93,77 @@ func Load(path string) (Config, error) {
 	if err := c.env(); err != nil {
 		return c, err
 	}
+	c.anchor()
 	return c, c.validate()
+}
+
+// DefaultDSN is the zero-setup SQLite database, relative to Root.
+const DefaultDSN = "file:prahari.db"
+
+// anchor resolves the relative defaults against Root, so the zero-setup path
+// behaves the same whichever directory the process starts in. Values that
+// were configured explicitly are left alone.
+func (c *Config) anchor() {
+	def := Defaults()
+	if c.DSN == def.DSN {
+		c.DSN = SQLiteDSN()
+	}
+	if c.AttackBundle == def.AttackBundle {
+		c.AttackBundle = Resolve(def.AttackBundle)
+	}
+	if c.DataDir == def.DataDir {
+		c.DataDir = Resolve(def.DataDir)
+	}
+}
+
+// marker identifies the backend directory: it ships the pinned ATT&CK bundle.
+const marker = "data/attack/enterprise-attack-19.0.min.json"
+
+// SQLiteDSN is DefaultDSN anchored at Root.
+func SQLiteDSN() string {
+	return "file:" + filepath.ToSlash(Resolve(strings.TrimPrefix(DefaultDSN, "file:")))
+}
+
+// Root is the backend directory: PRAHARI_HOME if set, else the nearest
+// ancestor of the working directory (or its backend/ child) that holds the
+// pinned ATT&CK bundle, else the same search from the executable's directory,
+// else the source tree this binary was compiled from (absent under
+// -trimpath, as in the container image), else ".".
+func Root() string {
+	if h := os.Getenv("PRAHARI_HOME"); h != "" {
+		return h
+	}
+	var starts []string
+	if wd, err := os.Getwd(); err == nil {
+		starts = append(starts, wd)
+	}
+	if exe, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(exe))
+	}
+	if _, src, _, ok := runtime.Caller(0); ok && filepath.IsAbs(src) {
+		starts = append(starts, filepath.Dir(src))
+	}
+	for _, s := range starts {
+		for dir := s; ; dir = filepath.Dir(dir) {
+			for _, cand := range []string{dir, filepath.Join(dir, "backend")} {
+				if _, err := os.Stat(filepath.Join(cand, marker)); err == nil {
+					return cand
+				}
+			}
+			if filepath.Dir(dir) == dir {
+				break
+			}
+		}
+	}
+	return "."
+}
+
+// Resolve joins a relative path onto Root; absolute paths pass through.
+func Resolve(p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(Root(), p)
 }
 
 func (c *Config) env() error {

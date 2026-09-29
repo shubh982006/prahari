@@ -5,7 +5,6 @@
 **Scope** Everything server-side: ingest, detection, correlation, scoring, compliance, adversary bench, API
 
 > This document answers **how the system is built** — packages, ports, algorithms, schema, concurrency.
-> [`system-design.md`](./system-design.md) answers **how big, how fast, what breaks, who attacks it, and what we gave up** — capacity, SLOs, consistency, failure modes, threat model, scaling path, trade-offs.
 
 > **One line.** An attack is never one alert. Prahari turns thousands of individually-meaningless security alerts into a short, ranked list of incidents with a story, scores each by business impact, tells you how confident it is in its own grouping, starts India's six-hour CERT-In clock when one touches sensitive data — and can prove, with a curve, exactly where an attacker who knows about it would slip past.
 
@@ -621,6 +620,8 @@ WHERE a IS NOT NULL AND delta <= @window;
 ```
 
 **Defect fix 3 — memory.** The previous design loaded the whole window into RAM as `[]domain.Alert` before doing anything. This query returns edges, not alerts, so the linking step's memory is proportional to edges rather than to the full alert set. `Window()` survives for the stages that genuinely need alert bodies, and those stream.
+
+> **Status: deferred.** The shipped run path does not use this query yet. `AlertStore.EntityEdges` is implemented on both dialects and the conformance suite checks it against naive pairs (`EntityEdgesMatchNaivePairs`), but the run executor still loads the dataset's alerts (`LoadAlerts`) and the engine links consecutive pairs in memory. Switching over is deferred deliberately: it would change the golden seed-42 output and receipt hashes mid-build, and at demo scale (~2k alerts per run) memory is not the constraint. Until it lands, linking memory is proportional to the alert set, not to edges.
 
 Then union-find with path halving and union by size:
 
