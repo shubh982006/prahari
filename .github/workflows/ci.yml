@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  checks:
+    name: vet · dependency rule · migration parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go vet ./...
+      - run: sh scripts/check-deps.sh
+      - run: bash scripts/check-migrations.sh
+
+  test:
+    name: go test (SQLite + Postgres 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: prahari
+          POSTGRES_PASSWORD: prahari
+          POSTGRES_DB: prahari
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U prahari"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # Enables the Postgres half of the conformance suite, the contract test
+      # and TestReceiptIdenticalAcrossDialects; without it they skip.
+      PRAHARI_TEST_PG: postgres://prahari:prahari@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go build ./...
+      - run: go test -count=1 ./...
