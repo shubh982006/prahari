@@ -1,0 +1,14 @@
+$ go test ./internal/core/correlate -run '^$' -bench Similarity -benchtime 5x -count 3
+BenchmarkSimilarity/alerts=3895/direct-12         	       5	  82933260 ns/op
+BenchmarkSimilarity/alerts=3895/direct-12         	       5	  78270580 ns/op
+BenchmarkSimilarity/alerts=3895/direct-12         	       5	 107912400 ns/op
+BenchmarkSimilarity/alerts=3895/indexed-12        	       5	  65552760 ns/op
+BenchmarkSimilarity/alerts=3895/indexed-12        	       5	  63680960 ns/op
+BenchmarkSimilarity/alerts=3895/indexed-12        	       5	  52661040 ns/op
+BenchmarkSimilarity/alerts=48477/direct-12        	       5	10458219920 ns/op
+BenchmarkSimilarity/alerts=48477/direct-12        	       5	11059359580 ns/op
+BenchmarkSimilarity/alerts=48477/direct-12        	       5	11437107900 ns/op
+BenchmarkSimilarity/alerts=48477/indexed-12       	       5	1054721840 ns/op
+BenchmarkSimilarity/alerts=48477/indexed-12       	       5	1051941740 ns/op
+BenchmarkSimilarity/alerts=48477/indexed-12       	       5	1052193520 ns/op
+ok  	prahari/internal/core/correlate	221.546s

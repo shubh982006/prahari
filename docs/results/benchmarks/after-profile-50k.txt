@@ -1,0 +1,11 @@
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=50000$' -benchtime 3x -cpuprofile cpu50k.out
+$ go tool pprof -top -cum correlate.test cpu50k.out | grep correlate stages
+Time: 2026-09-30 10:59:03 IST
+Duration: 3.87s, Total samples = 5.71s (147.68%)
+Showing nodes accounting for 4.74s, 83.01% of 5.71s total
+     0.14s  2.45%  2.45%      2.90s 50.79%  prahari/internal/core/correlate.Run
+     0.14s  2.45% 10.33%      0.92s 16.11%  prahari/internal/core/correlate.(*build).incident
+     0.02s  0.35% 23.29%      0.54s  9.46%  prahari/internal/core/correlate.(*build).cohesion
+     0.07s  1.23% 38.70%      0.25s  4.38%  prahari/internal/core/correlate.launder
+         0     0% 38.70%      0.24s  4.20%  prahari/internal/core/correlate.(*build).similarity
+     0.06s  1.05% 39.75%      0.24s  4.20%  prahari/internal/core/correlate.newSideIndex

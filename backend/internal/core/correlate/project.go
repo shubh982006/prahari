@@ -39,15 +39,41 @@ type build struct {
 	local    map[int]int // run node index → local graph index
 	previewV *domain.SplitPreview
 	breach   *domain.BreachTrigger
+	sides    *sideIndex // built on the first bridge comparison
 }
 
 // SameActivityJaccard is the entity-set similarity above which two halves of a
 // bridge are treated as the same recurring activity.
 const SameActivityJaccard = 0.5
 
-// similarity is the Jaccard index of the linkable entities (not stop-listed,
-// seen at least twice) on the two sides of a bridge.
+// linkable reports whether an entity counts when comparing the two sides of a
+// bridge: entities seen once link nothing and only add noise to the
+// comparison (a scanner's random targets, spoofed senders).
+func linkable(idx *entity.Index, k string) bool { return !idx.Stoplist[k] && idx.DF[k] >= 2 }
+
+// bridgeSimilarity is the Jaccard index of the linkable entities on the two
+// sides of a bridge. Tests swap in the direct definition to prove the indexed
+// one returns identical values.
+var bridgeSimilarity = (*build).similarity
+
+// similarity answers from a per-component index built on first use, so each
+// bridge costs O(1) instead of a pass over the whole component. That pass per
+// bridge made the cohesion stage quadratic on large recurring components.
 func (b *build) similarity(nodes []node, idx *entity.Index, br cohesion.Bridge) float64 {
+	if b.sides == nil {
+		b.sides = newSideIndex(b.graph, b.nodes, nodes, idx)
+	}
+	if v, ok := b.sides.jaccard(b.graph.Edges[br.Edge], br.Edge); ok {
+		return v
+	}
+	return b.similarityDirect(nodes, idx, br)
+}
+
+// similarityDirect is the definition: collect both sides' entity sets and
+// intersect them. O(component) per bridge. It is the fallback for a graph the
+// index cannot answer (disconnected, which the group stage never produces)
+// and the reference the tests hold the index to.
+func (b *build) similarityDirect(nodes []node, idx *entity.Index, br cohesion.Bridge) float64 {
 	e := b.graph.Edges[br.Edge]
 	side := cohesion.Side(b.graph, e.U, br.Edge)
 	left, right := map[string]bool{}, map[string]bool{}
@@ -57,9 +83,7 @@ func (b *build) similarity(nodes []node, idx *entity.Index, br cohesion.Bridge) 
 			set = left
 		}
 		for _, k := range nodes[n].keys {
-			// entities seen once link nothing and only add noise to the
-			// comparison (a scanner's random targets, spoofed senders)
-			if !idx.Stoplist[k] && idx.DF[k] >= 2 {
+			if linkable(idx, k) {
 				set[k] = true
 			}
 		}
@@ -76,6 +100,129 @@ func (b *build) similarity(nodes []node, idx *entity.Index, br cohesion.Bridge) 
 		return 1
 	}
 	return float64(inter) / float64(union)
+}
+
+// sideIndex holds, for every node of a spanning tree of one component, how
+// many linkable entities of its subtree also occur outside it.
+//
+// Removing a bridge leaves two sides: a tree edge's lower subtree and the
+// rest. Jaccard is symmetric in the sides, the union of both sides' entity
+// sets is every linkable entity in the component, and an entity is on both
+// sides exactly when 0 < (nodes in the subtree holding it) < (nodes in the
+// component holding it). Subtree counts are merged small-to-large, so the
+// whole index costs O(K log V) for K entity references.
+type sideIndex struct {
+	connected  bool
+	total      int   // distinct linkable entities in the component
+	shared     []int // per node: subtree entities that also occur outside it
+	parentEdge []int // per node: tree edge to its parent, -1 at the root
+}
+
+func newSideIndex(g *cohesion.Graph, members []int, nodes []node, idx *entity.Index) *sideIndex {
+	s := &sideIndex{shared: make([]int, g.N), parentEdge: make([]int, g.N)}
+	adj := make([][][2]int, g.N) // neighbour, edge
+	for i, e := range g.Edges {
+		adj[e.U] = append(adj[e.U], [2]int{e.V, i})
+		adj[e.V] = append(adj[e.V], [2]int{e.U, i})
+	}
+	for i := range s.parentEdge {
+		s.parentEdge[i] = -1
+	}
+	if g.N == 0 {
+		return s
+	}
+	seen := make([]bool, g.N)
+	parent := make([]int, g.N)
+	order := []int{0}
+	seen[0], parent[0] = true, -1
+	for q := 0; q < len(order); q++ {
+		u := order[q]
+		for _, h := range adj[u] {
+			if !seen[h[0]] {
+				seen[h[0]], parent[h[0]], s.parentEdge[h[0]] = true, u, h[1]
+				order = append(order, h[0])
+			}
+		}
+	}
+	if s.connected = len(order) == g.N; !s.connected {
+		return s
+	}
+	keys := make([][]string, g.N)
+	count := map[string]int{}
+	for i, n := range members {
+		seenKey := map[string]bool{}
+		for _, k := range nodes[n].keys {
+			if linkable(idx, k) && !seenKey[k] {
+				seenKey[k] = true
+				keys[i] = append(keys[i], k)
+				count[k]++
+			}
+		}
+	}
+	s.total = len(count)
+	sub := make([]map[string]int, g.N)
+	partial := make([]int, g.N) // keys in sub[u] held by fewer nodes than in the component
+	for q := len(order) - 1; q >= 0; q-- {
+		u := order[q]
+		if sub[u] == nil {
+			sub[u] = map[string]int{}
+		}
+		for _, k := range keys[u] {
+			partial[u] += mergeKey(sub[u], k, 1, count[k])
+		}
+		s.shared[u] = partial[u]
+		if p := parent[u]; p >= 0 {
+			if sub[p] == nil {
+				sub[p] = map[string]int{}
+			}
+			big, small := sub[p], sub[u]
+			pb, ps := partial[p], partial[u]
+			if len(small) > len(big) {
+				big, small, pb = small, big, ps
+			}
+			for k, c := range small {
+				pb += mergeKey(big, k, c, count[k])
+			}
+			sub[p], partial[p], sub[u] = big, pb, nil
+		}
+	}
+	return s
+}
+
+// mergeKey adds c holders of k to m and returns the change in the number of
+// keys of m that are held by fewer than all total holders.
+func mergeKey(m map[string]int, k string, c, total int) int {
+	before := m[k]
+	after := before + c
+	m[k] = after
+	d := 0
+	if before > 0 && before < total {
+		d--
+	}
+	if after < total {
+		d++
+	}
+	return d
+}
+
+// jaccard returns the similarity across a bridge, or false when the index
+// cannot answer (the graph is disconnected, or the edge is not a tree edge,
+// which a bridge of a connected graph always is).
+func (s *sideIndex) jaccard(e cohesion.Edge, edge int) (float64, bool) {
+	child := -1
+	switch {
+	case s.parentEdge[e.U] == edge:
+		child = e.U
+	case s.parentEdge[e.V] == edge:
+		child = e.V
+	}
+	if !s.connected || child < 0 {
+		return 0, false
+	}
+	if s.total == 0 {
+		return 1, true
+	}
+	return float64(s.shared[child]) / float64(s.total), true
 }
 
 func (b *build) cohesion(nodes []node, idx *entity.Index) {
@@ -125,7 +272,7 @@ func (b *build) cohesion(nodes []node, idx *entity.Index) {
 			if b.graph.Edges[br.Edge].Weight >= cohesion.FragileWeight {
 				break
 			}
-			if b.similarity(nodes, idx, br) < SameActivityJaccard {
+			if bridgeSimilarity(b, nodes, idx, br) < SameActivityJaccard {
 				pick = i
 				break
 			}

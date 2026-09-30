@@ -1,0 +1,17 @@
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=(3000|50000)$' -benchmem -benchtime 3x -timeout 20m
+cpu: 12th Gen Intel(R) Core(TM) i5-1235U
+BenchmarkRun/alerts=3000-12         	       3	  49928967 ns/op	     60086 alerts/s	       212.0 incidents	10957085 B/op	  101461 allocs/op
+BenchmarkRun/alerts=50000-12        	       3	1643364967 ns/op	     30425 alerts/s	      3668 incidents	200108789 B/op	 1733139 allocs/op
+ok  	prahari/internal/core/correlate	10.402s
+
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=300000$' -benchmem -benchtime 1x -timeout 60m
+cpu: 12th Gen Intel(R) Core(TM) i5-1235U
+BenchmarkRun/alerts=300000-12         	       1	9061688100 ns/op	     33107 alerts/s	     22215 incidents	1425140168 B/op	12303914 allocs/op
+ok  	prahari/internal/core/correlate	16.175s
+
+$ go test ./internal/core/correlate -run '^$' -bench 'Run/alerts=3000$' -benchmem -benchtime 20x -count 5
+BenchmarkRun/alerts=3000-12         	      20	  56582060 ns/op	     53020 alerts/s	       212.0 incidents	10957552 B/op	  101466 allocs/op
+BenchmarkRun/alerts=3000-12         	      20	 112498310 ns/op	     26667 alerts/s	       212.0 incidents	10956996 B/op	  101466 allocs/op
+BenchmarkRun/alerts=3000-12         	      20	  91314460 ns/op	     32854 alerts/s	       212.0 incidents	10957209 B/op	  101466 allocs/op
+BenchmarkRun/alerts=3000-12         	      20	  98507940 ns/op	     30454 alerts/s	       212.0 incidents	10957068 B/op	  101466 allocs/op
+BenchmarkRun/alerts=3000-12         	      20	  84700270 ns/op	     35419 alerts/s	       212.0 incidents	10957033 B/op	  101465 allocs/op
