@@ -137,6 +137,9 @@ func (a *App) Narrative(ctx context.Context, runID, incidentID string, regenerat
 		a.Log.Warn("cache narrative", "err", err)
 	}
 	_, _ = a.audit(ctx, a.Store, "system", "narrative.generated", incidentID, map[string]any{"facts_hash": hash, "source": source, "attempts": attempts})
+	if regenerate {
+		a.notify("narrative.updated", map[string]any{"incident_id": incidentID, "run_id": runID})
+	}
 	return viewOf(stored), nil
 }
 

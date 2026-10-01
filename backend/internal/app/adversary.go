@@ -86,7 +86,7 @@ func (a *App) CreateCampaign(ctx context.Context, in CampaignInput, actor string
 	if d.Kind == "adversarial" || !d.HasTruth {
 		return CampaignView{}, domain.Unprocessable("NO_GROUND_TRUTH", "campaigns need a simulated base dataset with planted truth")
 	}
-	if _, err := a.readTruth(d.DatasetID); err != nil {
+	if _, err := a.readTruth(ctx, d.DatasetID); err != nil {
 		return CampaignView{}, err
 	}
 	c := Campaign{CampaignID: newCampaignID(), BaseDataset: d.DatasetID, Strategy: in.Strategy, Budgets: budgets,
@@ -147,11 +147,12 @@ func (a *App) runCampaign(ctx context.Context, id string) (err error) {
 	if err := a.Store.UpdateCampaign(ctx, id, "running", nil, nil, nil); err != nil {
 		return err
 	}
+	a.notify("campaign.started", map[string]any{"campaign_id": id, "dataset_id": c.BaseDataset})
 	base, err := a.Store.LoadAlerts(ctx, c.BaseDataset)
 	if err != nil {
 		return err
 	}
-	truth, err := a.readTruth(c.BaseDataset)
+	truth, err := a.readTruth(ctx, c.BaseDataset)
 	if err != nil {
 		return err
 	}
@@ -191,7 +192,7 @@ func (a *App) runCampaign(ctx context.Context, id string) (err error) {
 			Scenarios: []string{}, HasTruth: true, ParentID: &parent, CreatedAt: a.now()}); err != nil {
 			return err
 		}
-		if err := a.writeTruth(v.Truth); err != nil {
+		if err := a.writeTruth(ctx, v.Truth); err != nil {
 			return err
 		}
 		ins, _, err := a.Store.InsertAlerts(ctx, v.Alerts)

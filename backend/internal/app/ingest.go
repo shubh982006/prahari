@@ -433,6 +433,9 @@ func (a *App) IngestAlerts(ctx context.Context, datasetID, actor string, body io
 	if err == nil {
 		_, err = a.audit(ctx, a.Store, actor, "ingest.batch", datasetID, map[string]any{"kind": "alerts", "accepted": rep.Accepted, "rejected": rep.Rejected, "duplicates": rep.Duplicates})
 	}
+	if err == nil && rep.Accepted > 0 {
+		a.notify("dataset.updated", map[string]any{"dataset_id": datasetID})
+	}
 	return rep, err
 }
 
@@ -522,6 +525,9 @@ func (a *App) IngestAuthEvents(ctx context.Context, datasetID, actor string, bod
 	rep.DurationMS = time.Since(start).Milliseconds()
 	if err == nil {
 		_, err = a.audit(ctx, a.Store, actor, "ingest.batch", datasetID, map[string]any{"kind": "auth_events", "accepted": rep.Accepted, "rejected": rep.Rejected, "alerts_raised": rep.AlertsRaised})
+	}
+	if err == nil && rep.AlertsRaised > 0 {
+		a.notify("dataset.updated", map[string]any{"dataset_id": datasetID})
 	}
 	return rep, err
 }

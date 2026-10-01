@@ -1,0 +1,149 @@
+/* Prahari tokens. Named values follow DESIGN.md; components read only the
+   semantic layer (--bg, --ink, --line, --sev-*), which .on-dark / .on-light and
+   [data-theme] re-scope. */
+
+:root {
+  --color-midnight-ink: #09101c;
+  --color-slate-depth: #131d2f;
+  --color-steel-edge: #1b273d;
+  --color-graphite-plate: #3a4049;
+  --color-slate-mist: #647084;
+  --color-ash-light: #a1abbd;
+  --color-pale-mist: #dce0e5;
+  --color-cloud: #f0f2f5;
+  --color-paper: #ffffff;
+  --color-signal-blue: #2a4af5;
+  --color-prahari-violet: #7140fd;
+  --color-deep-teal: #2a799b;
+  --color-amber-glow: #f6b03c;
+  --color-alarm-red: #ff4d6a;
+  --color-steady-green: #35c88a;
+
+  --font-sans: 'Helvetica Neue', Helvetica, Arial, system-ui, sans-serif;
+
+  --text-caption: 11px;
+  --text-small: 13px;
+  --text-body: 15px;
+  --text-body-md: 16px;
+  --text-subheading: 19px;
+  --text-heading-sm: 27px;
+  --text-heading: clamp(40px, 5.2vw, 64px);
+  --text-display: clamp(44px, 7.2vw, 88px);
+
+  --radius-chip: 4px;
+  --radius-button: 12px;
+  --radius-panel: 12px;
+  --radius-card: 20px;
+  --radius-image: 24px;
+  --radius-full: 9999px;
+
+  --shadow-lg: rgba(9, 16, 28, 0.08) 0 4px 20px 0;
+  --shadow-lg-2: rgba(9, 16, 28, 0.04) 0 2px 20px 0;
+
+  --page-max: 1200px;
+  --gutter: clamp(16px, 4vw, 24px);
+  --section-gap: clamp(80px, 12vw, 160px);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --dur-fast: 150ms;
+  --dur: 220ms;
+
+  --z-sticky: 10;
+  --z-nav: 20;
+  --z-banner: 30;
+  --z-tooltip: 50;
+
+  --chart-on: #8b6dff;
+  --chart-off: #0e9fd8;
+}
+
+/* Dark semantic layer: default, projector-tuned. */
+:root,
+[data-theme='dark'],
+.on-dark {
+  --bg: var(--color-midnight-ink);
+  --bg-app: #070d17;
+  --surface-1: var(--color-slate-depth);
+  --surface-2: #19253a;
+  --surface-3: var(--color-graphite-plate);
+  --ink: #ffffff;
+  --ink-2: var(--color-ash-light);
+  --ink-3: #7c879a;
+  --line: var(--color-steel-edge);
+  --line-strong: #2a3852;
+  --violet-text: #a58bff;
+  --focus: #8ea0ff;
+  --primary: var(--color-signal-blue);
+  --primary-hover: #4361ff;
+  --on-primary: #ffffff;
+
+  --sev-critical: var(--color-alarm-red);
+  --sev-high: var(--color-amber-glow);
+  --sev-medium: var(--color-amber-glow);
+  --sev-low: var(--color-steady-green);
+  --sev-info: var(--color-slate-mist);
+  --sev-critical-ink: var(--color-alarm-red);
+  --sev-high-ink: var(--color-amber-glow);
+  --sev-medium-ink: var(--color-amber-glow);
+  --sev-low-ink: var(--color-steady-green);
+  --sev-info-ink: var(--color-ash-light);
+
+  color-scheme: dark;
+}
+
+[data-theme='light'],
+.on-light {
+  --bg: var(--color-paper);
+  --bg-app: #f5f6f8;
+  --surface-1: var(--color-cloud);
+  --surface-2: #e6e9ee;
+  --surface-3: #d3d8df;
+  --ink: var(--color-midnight-ink);
+  --ink-2: #3b4658;
+  --ink-3: var(--color-slate-mist);
+  --line: var(--color-pale-mist);
+  --line-strong: #c3c9d2;
+  --violet-text: var(--color-prahari-violet);
+  --focus: var(--color-signal-blue);
+  --primary: var(--color-signal-blue);
+  --primary-hover: #1f3ad6;
+  --on-primary: #ffffff;
+
+  --sev-critical: #e5304f;
+  --sev-high: #e09a1f;
+  --sev-medium: #e09a1f;
+  --sev-low: #1fa870;
+  --sev-info: var(--color-slate-mist);
+  --sev-critical-ink: #c01c3a;
+  --sev-high-ink: #8f5a00;
+  --sev-medium-ink: #8f5a00;
+  --sev-low-ink: #10714a;
+  --sev-info-ink: #4b5566;
+
+  color-scheme: light;
+}
+
+/* A landing section forced dark must win over a light theme on <html>. */
+[data-theme='light'] .on-dark {
+  --bg: var(--color-midnight-ink);
+  --surface-1: var(--color-slate-depth);
+  --surface-2: #19253a;
+  --ink: #ffffff;
+  --ink-2: var(--color-ash-light);
+  --ink-3: #7c879a;
+  --line: var(--color-steel-edge);
+  --line-strong: #2a3852;
+  --violet-text: #a58bff;
+  --focus: #8ea0ff;
+  --sev-critical: var(--color-alarm-red);
+  --sev-high: var(--color-amber-glow);
+  --sev-medium: var(--color-amber-glow);
+  --sev-low: var(--color-steady-green);
+  --sev-critical-ink: var(--color-alarm-red);
+  --sev-high-ink: var(--color-amber-glow);
+  --sev-medium-ink: var(--color-amber-glow);
+  --sev-low-ink: var(--color-steady-green);
+  --sev-info-ink: var(--color-ash-light);
+  color-scheme: dark;
+}

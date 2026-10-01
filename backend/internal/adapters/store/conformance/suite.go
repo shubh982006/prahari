@@ -295,6 +295,27 @@ func RunSuite(t *testing.T, newStore func(t *testing.T) app.Store) {
 		}
 	})
 
+	t.Run("TruthRoundTripsAndReplaces", func(t *testing.T) {
+		s := newStore(t)
+		if _, err := s.GetTruth(ctx, "ds_none"); !isCode(err, "NOT_FOUND") {
+			t.Fatalf("missing truth: %v", err)
+		}
+		if err := s.PutTruth(ctx, "ds_t", []byte(`{"dataset_id":"ds_t","v":1}`), t0); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.PutTruth(ctx, "ds_t", []byte(`{"dataset_id":"ds_t","v":2}`), t0.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		b, err := s.GetTruth(ctx, "ds_t")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct{ V int }
+		if err := json.Unmarshal(b, &got); err != nil || got.V != 2 {
+			t.Fatalf("truth after replace: %s (%v)", b, err)
+		}
+	})
+
 	t.Run("DuplicatesAreConflicts", func(t *testing.T) {
 		s := newStore(t)
 		sup := domain.Suppression{RuleID: "R", EntityKey: "ip:1.1.1.1", CreatedBy: "u", CreatedAt: t0}

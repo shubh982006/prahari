@@ -41,24 +41,34 @@ func (a *App) truthPath(datasetID string) string {
 	return filepath.Join(a.DataDir, "truth", datasetID+".json")
 }
 
-// writeTruth stores ground truth outside the database. The API never returns
-// it and the engine never reads it; only evaluation and the adversary bench do.
-func (a *App) writeTruth(t domain.Truth) error {
-	if err := os.MkdirAll(filepath.Join(a.DataDir, "truth"), 0o755); err != nil {
-		return err
-	}
+// writeTruth stores ground truth in the database, so it survives hosts whose
+// local disk is wiped on restart. The API never returns it and the engine
+// never reads it; only evaluation and the adversary bench do.
+func (a *App) writeTruth(ctx context.Context, t domain.Truth) error {
 	b, err := json.Marshal(t)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(a.truthPath(t.DatasetID), b, 0o644)
+	return a.Store.PutTruth(ctx, t.DatasetID, b, a.now())
 }
 
-func (a *App) readTruth(datasetID string) (domain.Truth, error) {
+// readTruth reads from the database. A truth file left by an older version
+// is read once and copied in, so existing installations migrate themselves.
+func (a *App) readTruth(ctx context.Context, datasetID string) (domain.Truth, error) {
 	var t domain.Truth
-	b, err := os.ReadFile(a.truthPath(datasetID))
+	b, err := a.Store.GetTruth(ctx, datasetID)
 	if err != nil {
-		return t, domain.Unprocessable("NO_GROUND_TRUTH", "dataset %s has no ground truth; evaluation needs a simulated dataset", datasetID)
+		if de, ok := domain.AsError(err); !ok || de.Code != "NOT_FOUND" {
+			return t, err
+		}
+		file, ferr := os.ReadFile(a.truthPath(datasetID))
+		if ferr != nil {
+			return t, domain.Unprocessable("NO_GROUND_TRUTH", "dataset %s has no ground truth; evaluation needs a simulated dataset", datasetID)
+		}
+		if err := a.Store.PutTruth(ctx, datasetID, file, a.now()); err != nil {
+			a.Log.Warn("backfill ground truth", "dataset_id", datasetID, "err", err)
+		}
+		b = file
 	}
 	return t, json.Unmarshal(b, &t)
 }
@@ -78,7 +88,7 @@ func (a *App) Simulate(ctx context.Context, p simulate.Params, actor string) (Da
 	if err := a.Store.CreateDataset(ctx, d); err != nil {
 		return d, err
 	}
-	if err := a.writeTruth(sim.Truth); err != nil {
+	if err := a.writeTruth(ctx, sim.Truth); err != nil {
 		return d, err
 	}
 	var events, alerts bytes.Buffer
@@ -100,6 +110,7 @@ func (a *App) Simulate(ctx context.Context, p simulate.Params, actor string) (Da
 	if _, err := a.audit(ctx, a.Store, actor, "dataset.created", d.DatasetID, map[string]any{"kind": "simulated", "seed": p.Seed, "scenarios": p.Scenarios}); err != nil {
 		return d, err
 	}
+	a.notify("dataset.created", map[string]any{"dataset_id": d.DatasetID})
 	return a.Store.GetDataset(ctx, d.DatasetID)
 }
 
@@ -127,16 +138,20 @@ func (a *App) CreateDataset(ctx context.Context, id string, from, to time.Time, 
 	if err := a.Store.CreateDataset(ctx, d); err != nil {
 		return d, err
 	}
-	_, err := a.audit(ctx, a.Store, actor, "dataset.created", id, map[string]any{"kind": "ingested"})
-	return d, err
+	if _, err := a.audit(ctx, a.Store, actor, "dataset.created", id, map[string]any{"kind": "ingested"}); err != nil {
+		return d, err
+	}
+	a.notify("dataset.created", map[string]any{"dataset_id": id})
+	return d, nil
 }
 
 // SeedDemo creates and correlates the seed-42 dataset on an empty database,
-// so a fresh clone has something to look at within seconds.
+// so a fresh clone has something to look at within seconds, then prewarms the
+// evaluation and adversary bench so no demo panel opens empty.
 func (a *App) SeedDemo(ctx context.Context) error {
 	id := simulate.DatasetID(simulate.Params{Seed: 42})
 	if d, err := a.Store.GetDataset(ctx, id); err == nil && d.CurrentRunID != nil {
-		return nil
+		return a.prewarmDemo(ctx, id, *d.CurrentRunID)
 	}
 	if _, err := a.Store.GetDataset(ctx, id); err != nil {
 		if _, err := a.Simulate(ctx, simulate.Params{Seed: 42}, "system"); err != nil {
@@ -151,7 +166,7 @@ func (a *App) SeedDemo(ctx context.Context) error {
 		return err
 	}
 	a.Log.Info("demo dataset seeded", "dataset_id", id, "run_id", run.RunID)
-	return nil
+	return a.prewarmDemo(ctx, id, run.RunID)
 }
 
 // ---------- alerts ----------

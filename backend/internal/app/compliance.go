@@ -221,6 +221,7 @@ func (a *App) RecordSubmission(ctx context.Context, caseID, track, actor, refere
 	if err != nil {
 		return CaseView{}, err
 	}
+	a.notify("case.updated", map[string]any{"case_id": caseID, "incident_id": c.IncidentID, "dataset_id": c.DatasetID, "track": track})
 	return caseView(c, a.now()), nil
 }
 

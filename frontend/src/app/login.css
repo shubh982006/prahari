@@ -1,0 +1,109 @@
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 24px var(--gutter);
+  background:
+    radial-gradient(40% 50% at 50% 0%, rgba(113, 64, 253, 0.18), transparent 70%),
+    var(--bg-app);
+}
+.login__card {
+  display: grid;
+  gap: 20px;
+  width: min(400px, 100%);
+  padding: 32px;
+  border-radius: var(--radius-card);
+  background: var(--bg);
+  border: 1px solid var(--line);
+}
+.login h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.login form {
+  display: grid;
+  gap: 8px;
+}
+.login label {
+  margin-top: 6px;
+  color: var(--ink-2);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+.login input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-1);
+  color: var(--ink);
+  font: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.login input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+.login__pw {
+  position: relative;
+}
+.login__pw input {
+  padding-right: 48px;
+}
+.login__pw button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-3);
+}
+.login__pw button:hover {
+  color: var(--ink);
+}
+.login__error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--sev-critical-ink);
+  font-size: var(--text-small);
+}
+.login__submit {
+  justify-content: center;
+  margin-top: 12px;
+}
+.login__submit:disabled {
+  opacity: 0.5;
+}
+.login__demo {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.login__demo code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-1);
+  color: var(--ink-2);
+}
+.login__back {
+  justify-self: start;
+  color: var(--ink-2);
+  font-size: var(--text-small);
+  text-underline-offset: 4px;
+}
+
+.login__slow {
+  margin-top: 4px;
+  color: var(--ink-2);
+  font-size: var(--text-small);
+}

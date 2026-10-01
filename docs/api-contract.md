@@ -423,7 +423,20 @@ Events after `Last-Event-ID` are replayed (last 200 kept per run). Connecting to
 
 ### `GET /events` — global SSE
 
-`event` ∈ `run.started`, `run.finished`, `case.opened`, `incident.updated`, `campaign.finished`.
+Every write the console can see is announced here, so an open screen refreshes without polling. Clients ignore types they do not know.
+
+| `event` | Fields | Fired by |
+|---|---|---|
+| `run.started` / `run.finished` | `dataset_id`, `run_id` | the run worker |
+| `case.opened` | `dataset_id`, `incident_id`, `case_id` | a run that trips the compliance trigger |
+| `case.updated` | `dataset_id`, `incident_id`, `case_id`, `track` | `POST …/submission` |
+| `incident.updated` | `incident_id`, `run_id` | `PATCH /incidents/{id}`, feedback |
+| `narrative.updated` | `incident_id`, `run_id` | `POST …/narrative/regenerate` |
+| `campaign.started` / `campaign.finished` | `campaign_id`, `dataset_id` | the campaign worker |
+| `dataset.created` / `dataset.updated` | `dataset_id` | simulation, dataset creation, NDJSON ingest |
+| `evaluation.finished` | `dataset_id`, `run_id` | `POST /evaluations` |
+| `asset.updated` | `hostname` | `PUT /assets/{hostname}` |
+| `rules.updated` | — | feedback, suppression deletion |
 
 ---
 

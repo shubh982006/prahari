@@ -1,0 +1,60 @@
+# Render Blueprint: the Prahari API on a free web service with a free Postgres.
+# New > Blueprint in the Render dashboard, point it at this repository, and fill
+# in the three values marked sync: false when asked.
+#
+# Free-tier facts worth knowing:
+#  - the web service sleeps after 15 minutes without traffic; the next request
+#    wakes it in roughly a minute
+#  - the free database expires 30 days after creation unless upgraded
+#  - local disk is wiped on every restart; everything Prahari keeps (including
+#    ground truth for evaluation) lives in Postgres, so nothing is lost
+
+databases:
+  - name: prahari-db
+    plan: free
+    region: singapore
+    databaseName: prahari
+    user: prahari
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: prahari-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /healthz
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - backend/**
+    envVars:
+      # The image listens on :8000; PORT tells Render where to route.
+      - key: PORT
+        value: "8000"
+      - key: PRAHARI_DB_DSN
+        fromDatabase:
+          name: prahari-db
+          property: connectionString
+      # A fixed secret keeps everyone signed in across restarts and deploys.
+      - key: PRAHARI_JWT_SECRET
+        generateValue: true
+      # Demo mode seeds the seed-42 dataset, its evaluation and the adversary
+      # bench on a fresh database. With the two passwords below set, the
+      # well-known demo passwords are never used.
+      - key: PRAHARI_DEMO_MODE
+        value: "true"
+      - key: PRAHARI_LEAD_PASSWORD
+        sync: false
+      - key: PRAHARI_ANALYST_PASSWORD
+        sync: false
+      # Your Vercel URLs, comma-separated. One * is allowed for preview
+      # deployments, e.g. https://prahari.vercel.app,https://prahari-*.vercel.app
+      - key: PRAHARI_CORS_ORIGINS
+        sync: false
+      - key: PRAHARI_LLM_ENABLED
+        value: "false"
+      - key: PRAHARI_LOG_LEVEL
+        value: info

@@ -110,13 +110,16 @@ func run() error {
 
 	lead, analyst := cfg.LeadPassword, cfg.AnalystPassword
 	if cfg.DemoMode {
-		if lead == "" {
-			lead = "prahari-lead"
+		// Only the built-in demo passwords are ever logged; a password supplied
+		// through the environment is a secret and stays out of the logs.
+		shown := func(user, def string, set *string) string {
+			if *set == "" {
+				*set = def
+				return user + " / " + def + " (built-in demo password)"
+			}
+			return user + " / (set from the environment)"
 		}
-		if analyst == "" {
-			analyst = "prahari-analyst"
-		}
-		log.Warn("demo mode: default credentials in use unless overridden", "lead", "meow / "+lead, "analyst", "analyst / "+analyst)
+		log.Warn("demo mode", "lead", shown("meow", "prahari-lead", &lead), "analyst", shown("analyst", "prahari-analyst", &analyst))
 	} else if lead == "" {
 		log.Warn("no PRAHARI_LEAD_PASSWORD set; the lead account is not created")
 	}
@@ -145,9 +148,10 @@ func run() error {
 		}
 		return true, ""
 	}
+	api := httpapi.New(a, cfg, log, ready)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.New(a, cfg, log, ready).Handler(),
+		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// No WriteTimeout: SSE streams are long-lived and send a ping every 15 s.
@@ -165,6 +169,9 @@ func run() error {
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
+	// Streams first: they would otherwise hold Shutdown for its full timeout
+	// while every client stares at a connection that will never speak again.
+	api.CloseStreams()
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a.Stop(shutdown)

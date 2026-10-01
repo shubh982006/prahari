@@ -343,6 +343,19 @@ func (s *Store) LatestEvaluation(ctx context.Context, datasetID string) (app.Eva
 	return e, notFound(err, "evaluation")
 }
 
+func (s *Store) PutTruth(ctx context.Context, datasetID string, body []byte, at time.Time) error {
+	_, err := s.exec(ctx, `INSERT INTO ground_truths (dataset_id, created_at, body) VALUES (?,?,?)
+		ON CONFLICT (dataset_id) DO UPDATE SET created_at = excluded.created_at, body = excluded.body`,
+		datasetID, s.ts(at), string(body))
+	return err
+}
+
+func (s *Store) GetTruth(ctx context.Context, datasetID string) ([]byte, error) {
+	var b json.RawMessage
+	err := s.row(ctx, `SELECT body FROM ground_truths WHERE dataset_id = ?`, datasetID).Scan(jsonv{&b})
+	return b, notFound(err, "ground truth")
+}
+
 func (s *Store) GetIdempotent(ctx context.Context, userID, route, key string, since time.Time) (app.IdempotentResponse, bool, error) {
 	var r app.IdempotentResponse
 	var headers json.RawMessage

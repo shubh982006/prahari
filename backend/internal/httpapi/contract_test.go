@@ -636,6 +636,9 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	if code, _, _ := c.do("PUT", "/assets/{hostname}", []string{"new-host-1"}, map[string]any{"role": "workstation", "criticality": 3, "data_classes": []string{"pii"}}); code != 201 {
 		t.Fatal("asset create")
 	}
+	global.waitFor(t, 5*time.Second, "asset.updated", func(ev sseEvent) bool {
+		return ev.Type == "asset.updated" && str(field(ev.Data, "hostname")) == "new-host-1"
+	})
 
 	// compliance
 	_, _, cases := c.do("GET", "/compliance/cases?state=all", nil, nil)
@@ -650,6 +653,9 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 		if code, _, b := c.do("POST", "/compliance/cases/{caseId}/tracks/{track}/submission", []string{caseID, "certin"}, sub); code != 201 {
 			t.Fatalf("submission: %d %s", code, b)
 		}
+		global.waitFor(t, 5*time.Second, "case.updated", func(ev sseEvent) bool {
+			return ev.Type == "case.updated" && str(field(ev.Data, "case_id")) == caseID && str(field(ev.Data, "track")) == "certin"
+		})
 		if code, _, _ := c.do("POST", "/compliance/cases/{caseId}/tracks/{track}/submission", []string{caseID, "certin"}, sub); code != 409 {
 			t.Fatal("second submission must be 409")
 		}
@@ -662,6 +668,9 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	if code, _, b := c.do("POST", "/evaluations", nil, map[string]any{"run_id": runID}); code != 201 {
 		t.Fatalf("evaluation: %d %s", code, b)
 	}
+	global.waitFor(t, 5*time.Second, "evaluation.finished", func(ev sseEvent) bool {
+		return ev.Type == "evaluation.finished" && str(field(ev.Data, "run_id")) == runID
+	})
 	c.do("GET", "/evaluations/latest?dataset_id="+ds, nil, nil)
 	_, _, au := c.do("GET", "/audit?limit=5", nil, nil)
 	c.do("GET", "/audit?limit=5&cursor="+str(field(au, "page", "next_cursor")), nil, nil)
@@ -706,6 +715,10 @@ func contract(t *testing.T, sp *spec, store app.Store) {
 	global.waitFor(t, 5*time.Second, "campaign.finished", func(ev sseEvent) bool {
 		return ev.Type == "campaign.finished" && str(field(ev.Data, "campaign_id")) == camp
 	})
+	global.waitFor(t, 5*time.Second, "campaign.started", func(ev sseEvent) bool {
+		return ev.Type == "campaign.started" && str(field(ev.Data, "campaign_id")) == camp
+	})
+	global.waitFor(t, 5*time.Second, "rules.updated", func(ev sseEvent) bool { return ev.Type == "rules.updated" })
 	if code, _, _ := c.do("GET", "/adversary/campaigns/{campaignId}/events", []string{"camp_NOPE0000"}, nil); code != 404 {
 		t.Fatal("stream for an unknown campaign must be 404")
 	}
@@ -758,5 +771,40 @@ func TestSpecValidatorRejectsViolations(t *testing.T) {
 		if !inner.Failed() {
 			t.Errorf("%s %s %d accepted an invalid body: %s", b.method, b.path, b.status, b.body)
 		}
+	}
+}
+
+// On shutdown the server ends open event streams at once, so clients reconnect
+// to the next instance instead of waiting out Shutdown's timeout on a dead one.
+func TestStreamsCloseOnShutdown(t *testing.T) {
+	cat, err := attack.LoadFile("../../data/attack/enterprise-attack-19.0.min.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := app.New(app.Deps{Store: stores(t)["sqlite"](t), Pub: inproc.New(), LLM: azureopenai.Disabled{}, Clock: clock.System{},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Attack: cat, Engine: correlate.DefaultConfig(),
+		DataDir: t.TempDir(), Version: "test", JWTSecret: []byte("0123456789abcdef0123456789abcdef")})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := a.Setup(ctx, "lead-pw", "analyst-pw"); err != nil {
+		t.Fatal(err)
+	}
+	a.Start(ctx)
+	defer a.Stop(context.Background())
+	api := httpapi.New(a, config.Defaults(), slog.New(slog.NewTextHandler(io.Discard, nil)), func(context.Context) (bool, string) { return true, "" })
+	srv := httptest.NewServer(api.Handler())
+	defer srv.Close()
+	c := &client{t: t, base: srv.URL, spec: loadSpec(t)}
+	_, _, b := c.do("POST", "/auth/login", nil, map[string]string{"username": "meow", "password": "lead-pw"})
+	c.token = str(field(b, "access_token"))
+
+	st := c.sse("/events")
+	defer st.stop()
+	time.Sleep(100 * time.Millisecond)
+	start := time.Now()
+	api.CloseStreams()
+	st.wait(t, 2*time.Second)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("stream took %s to close", d)
 	}
 }

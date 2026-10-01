@@ -1363,13 +1363,20 @@ components:
       type: object
       required: [type, at]
       properties:
-        type: { type: string, enum: [run.started, run.finished, case.opened, incident.updated, campaign.finished] }
+        type:
+          type: string
+          description: Clients must ignore types they do not know; new types are additive.
+          enum: [run.started, run.finished, case.opened, case.updated, incident.updated, narrative.updated,
+                 campaign.started, campaign.finished, dataset.created, dataset.updated, evaluation.finished,
+                 asset.updated, rules.updated]
         at:   { type: string, format: date-time }
         dataset_id:  { type: string }
         run_id:      { type: string, format: uuid }
         incident_id: { type: string }
         case_id:     { type: string }
         campaign_id: { type: string }
+        track:       { $ref: '#/components/schemas/TrackName' }
+        hostname:    { type: string }
 
     # ---------- incidents ----------
     Breakdown:

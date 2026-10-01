@@ -609,6 +609,7 @@ func (a *App) RecordFeedback(ctx context.Context, incidentID, actor, role string
 	}
 	res.RerunRecommended = true
 	a.notify("incident.updated", map[string]any{"incident_id": incidentID, "run_id": row.RunID})
+	a.notify("rules.updated", nil)
 	return res, nil
 }
 
@@ -648,13 +649,17 @@ func (a *App) Rules(ctx context.Context) ([]RuleView, error) {
 }
 
 func (a *App) DeleteSuppression(ctx context.Context, id int64, actor string) error {
-	return a.Store.InTx(ctx, func(tx Store) error {
+	err := a.Store.InTx(ctx, func(tx Store) error {
 		if err := tx.DeleteSuppression(ctx, id); err != nil {
 			return err
 		}
 		_, err := a.audit(ctx, tx, actor, "suppression.deleted", strconv.FormatInt(id, 10), map[string]any{"suppression_id": id})
 		return err
 	})
+	if err == nil {
+		a.notify("rules.updated", nil)
+	}
+	return err
 }
 
 func deref(p *string) string {

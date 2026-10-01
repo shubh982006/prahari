@@ -20,6 +20,7 @@ import (
 	"prahari/internal/app"
 	"prahari/internal/core/attack"
 	"prahari/internal/core/correlate"
+	"prahari/internal/core/evaluate"
 	"prahari/internal/core/simulate"
 	"prahari/internal/domain"
 )
@@ -291,4 +292,73 @@ func TestSplitMaterialisesANewRun(t *testing.T) {
 func isCode(err error, code string) bool {
 	de, ok := domain.AsError(err)
 	return ok && de.Code == code
+}
+
+// A fresh demo must open with measured numbers: an evaluation and a curve for
+// every strategy with and without the laundering pass. Seeding again adds nothing.
+func TestSeedDemoPrewarmsEvaluationAndBench(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs eight adversary campaigns")
+	}
+	a := newApp(t, sqlite(t))
+	ctx := context.Background()
+	if err := a.SeedDemo(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ds := simulate.DatasetID(simulate.Params{Seed: 42})
+	if _, err := a.LatestEvaluation(ctx, ds); err != nil {
+		t.Fatalf("no evaluation after seeding: %v", err)
+	}
+	count := func() int {
+		cs, err := a.Store.ListCampaigns(ctx, ds, 500, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, c := range cs {
+			if c.Status != "succeeded" {
+				t.Fatalf("campaign %s %s is %s", c.Strategy, c.CampaignID, c.Status)
+			}
+			n++
+		}
+		return n
+	}
+	if n := count(); n != 8 {
+		t.Fatalf("want 8 campaigns (4 strategies x laundering on/off), got %d", n)
+	}
+	if err := a.SeedDemo(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 8 {
+		t.Fatalf("second seed ran campaigns again: %d", n)
+	}
+	if v, err := a.VerifyAudit(ctx); err != nil || !v.OK {
+		t.Fatalf("audit chain after demo: %+v err=%v", v, err)
+	}
+}
+
+// Hosts like Render wipe local disk on every restart. Ground truth lives in the
+// database, so evaluation still works after the data directory is gone.
+func TestTruthSurvivesWipedDisk(t *testing.T) {
+	for name, store := range map[string]func(*testing.T) *sqlstore.Store{"sqlite": sqlite, "postgres": postgres} {
+		t.Run(name, func(t *testing.T) {
+			a := newApp(t, store(t))
+			ctx := context.Background()
+			ds, err := a.Simulate(ctx, simulate.Params{Seed: 3}, "u_meow")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.RemoveAll(a.DataDir); err != nil {
+				t.Fatal(err)
+			}
+			run := runAndWait(t, a, ds.DatasetID)
+			ev, err := a.Evaluate(ctx, run.RunID, evaluate.AnalystModel{}, "u_meow")
+			if err != nil {
+				t.Fatalf("evaluate after the data directory was wiped: %v", err)
+			}
+			if len(ev.Scenarios) == 0 || string(ev.Scenarios) == "[]" {
+				t.Fatal("evaluation has no scenarios")
+			}
+		})
+	}
 }

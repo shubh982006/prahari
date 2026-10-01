@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"prahari/internal/app"
@@ -24,10 +25,18 @@ type Server struct {
 	limiter *limiter
 	metrics *metrics
 	ready   Readiness
+	// closing ends every open event stream when the process shuts down, so
+	// clients reconnect to the next instance instead of hanging on this one.
+	closing   chan struct{}
+	closeOnce sync.Once
 }
 
+// CloseStreams ends all open SSE streams. Call it before http.Server.Shutdown,
+// which otherwise waits for streams that never finish on their own.
+func (s *Server) CloseStreams() { s.closeOnce.Do(func() { close(s.closing) }) }
+
 func New(a *app.App, cfg config.Config, log *slog.Logger, ready Readiness) *Server {
-	s := &Server{app: a, cfg: cfg, log: log, limiter: newLimiter(), metrics: newMetrics(), ready: ready}
+	s := &Server{app: a, cfg: cfg, log: log, limiter: newLimiter(), metrics: newMetrics(), ready: ready, closing: make(chan struct{})}
 	s.metrics.gauges = func() map[string]float64 {
 		return map[string]float64{"prahari_sse_subscribers": float64(a.Pub.Subscribers())}
 	}

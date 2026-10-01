@@ -143,6 +143,10 @@ func (a *App) audit(ctx context.Context, s Store, actor, action, subject string,
 	return s.AppendAudit(ctx, e)
 }
 
+// Notify publishes a global event; adapters use it for writes they perform
+// directly against the store (asset upserts).
+func (a *App) Notify(typ string, fields map[string]any) { a.notify(typ, fields) }
+
 // notify publishes a global event for the notification stream.
 func (a *App) notify(typ string, fields map[string]any) {
 	if fields == nil {

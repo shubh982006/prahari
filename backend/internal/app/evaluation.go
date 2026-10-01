@@ -20,7 +20,7 @@ func (a *App) Evaluate(ctx context.Context, runID string, model evaluate.Analyst
 	if run.Status != "succeeded" {
 		return EvaluationView{}, domain.Unprocessable("RUN_NOT_SUCCEEDED", "run %s is %s", runID, run.Status)
 	}
-	truth, err := a.readTruth(run.DatasetID)
+	truth, err := a.readTruth(ctx, run.DatasetID)
 	if err != nil {
 		return EvaluationView{}, err
 	}
@@ -58,6 +58,7 @@ func (a *App) Evaluate(ctx context.Context, runID string, model evaluate.Analyst
 	if err := a.Store.PutEvaluation(ctx, Evaluation{EvaluationID: v.EvaluationID, RunID: runID, DatasetID: run.DatasetID, CreatedAt: v.CreatedAt, Body: body}); err != nil {
 		return v, err
 	}
+	a.notify("evaluation.finished", map[string]any{"dataset_id": run.DatasetID, "run_id": runID})
 	return v, nil
 }
 

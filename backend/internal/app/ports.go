@@ -112,6 +112,9 @@ type Store interface {
 	// evaluations
 	PutEvaluation(ctx context.Context, e Evaluation) error
 	LatestEvaluation(ctx context.Context, datasetID string) (Evaluation, error)
+	// PutTruth replaces a dataset's ground truth; GetTruth answers NOT_FOUND when there is none.
+	PutTruth(ctx context.Context, datasetID string, body []byte, at time.Time) error
+	GetTruth(ctx context.Context, datasetID string) ([]byte, error)
 
 	// idempotency
 	GetIdempotent(ctx context.Context, userID, route, key string, since time.Time) (IdempotentResponse, bool, error)

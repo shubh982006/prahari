@@ -820,6 +820,7 @@ func (s *Server) putAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	s.app.Notify("asset.updated", map[string]any{"hostname": host})
 	status := 200
 	if created {
 		status = 201

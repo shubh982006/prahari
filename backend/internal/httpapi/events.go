@@ -59,6 +59,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, topic string, re
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.closing:
+			return
 		case ev, open := <-ch:
 			if !open {
 				return

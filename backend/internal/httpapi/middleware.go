@@ -117,15 +117,39 @@ func (s *Server) base(next http.Handler) http.Handler {
 	})
 }
 
-// cors allows the configured frontend origins; the SPA normally reaches the
-// API through nginx on the same origin, where this is a no-op.
-func (s *Server) cors(next http.Handler) http.Handler {
-	allowed := map[string]bool{}
-	for _, o := range s.cfg.CORSOrigins {
-		allowed[o] = true
+// originAllowed matches an Origin against the configured list. An entry may
+// hold one `*`, which matches a run of letters, digits and hyphens only, so
+// `https://prahari-*.vercel.app` admits every preview deployment but not
+// `https://prahari-x.evil.com/.vercel.app` or a dotted look-alike.
+func originAllowed(patterns []string, origin string) bool {
+	for _, p := range patterns {
+		if p == origin {
+			return true
+		}
+		pre, post, wild := strings.Cut(p, "*")
+		if !wild || !strings.HasPrefix(origin, pre) || !strings.HasSuffix(origin, post) || len(origin) < len(pre)+len(post) {
+			continue
+		}
+		mid := origin[len(pre) : len(origin)-len(post)]
+		ok := mid != ""
+		for _, c := range mid {
+			if !(c == '-' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
 	}
+	return false
+}
+
+// cors allows the configured frontend origins. Same-origin deployments (nginx
+// in front of both) never send a cross-origin request, so there it is a no-op.
+func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if o := r.Header.Get("Origin"); o != "" && allowed[o] {
+		if o := r.Header.Get("Origin"); o != "" && originAllowed(s.cfg.CORSOrigins, o) {
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", o)
 			h.Set("Vary", "Origin")
